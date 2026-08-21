@@ -128,21 +128,6 @@ export default function Home() {
       // If the page is already inside Messenger, launching Messenger again
       // can leave the embedded browser stuck on "Loading".
       if (isInFBBrowser) {
-        try {
-          if (navigator.share) {
-            await navigator.share({
-              title: "USALB RADIO",
-              text: shareText,
-              url: shareUrl,
-            });
-            setShareOpen(false);
-            return;
-          }
-        } catch (error) {
-          if (error instanceof DOMException && error.name === "AbortError") {
-            return;
-          }
-        }
         copyLink();
         return;
       }
@@ -184,12 +169,24 @@ export default function Home() {
     setShareOpen(false);
   };
 
-  const copyLink = () => {
-    navigator.clipboard.writeText(shareUrl).then(() => {
-      setCopied(true);
-      setShareOpen(false);
-      setTimeout(() => setCopied(false), 2000);
-    });
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+    } catch {
+      // Some in-app browsers do not expose navigator.clipboard.
+      const input = document.createElement("textarea");
+      input.value = shareUrl;
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.appendChild(input);
+      input.focus();
+      input.select();
+      document.execCommand("copy");
+      input.remove();
+    }
+    setCopied(true);
+    setShareOpen(false);
+    setTimeout(() => setCopied(false), 2000);
   };
   
   const clearRetryTimers = useCallback(() => {
@@ -359,9 +356,11 @@ export default function Home() {
     // Try immediately, then retry after the first touch/click. The second
     // attempt satisfies browsers that block sound until user interaction.
     tryAutoplay();
+    audio.addEventListener("canplay", tryAutoplay);
     window.addEventListener("pointerdown", tryAutoplay, { once: true });
     window.addEventListener("touchstart", tryAutoplay, { once: true });
     return () => {
+      audio.removeEventListener("canplay", tryAutoplay);
       window.removeEventListener("pointerdown", tryAutoplay);
       window.removeEventListener("touchstart", tryAutoplay);
     };
@@ -629,7 +628,9 @@ export default function Home() {
                       <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#00B2FF] to-[#006AFF] flex items-center justify-center shrink-0">
                         <SiMessenger className="w-4 h-4 text-white" />
                       </div>
-                       <span className="text-white font-medium text-sm">Open Messenger</span>
+                       <span className="text-white font-medium text-sm">
+                         {isInFBBrowser ? "Copy link for Messenger" : "Open Messenger"}
+                       </span>
                     </button>
                     <button
                       onClick={() => shareOn("whatsapp")}
