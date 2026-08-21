@@ -88,10 +88,32 @@ export default function Home() {
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
-  const shareOn = (platform: "facebook" | "messenger" | "whatsapp" | "x") => {
+  const shareOn = async (platform: "facebook" | "messenger" | "whatsapp" | "x") => {
+    // On phones, use the operating system share sheet. This avoids opening
+    // Messenger's unreliable blank in-app share page and lets the user choose
+    // the installed app directly.
+    if (isIOS || isAndroid) {
+      try {
+        if (navigator.share) {
+          await navigator.share({
+            title: "USALB RADIO",
+            text: shareText,
+            url: shareUrl,
+          });
+          setShareOpen(false);
+          return;
+        }
+      } catch (error) {
+        // Closing the native share sheet is not an error.
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+      }
+    }
+
     const urls = {
       facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`,
-      messenger: `fb-messenger://share?link=${encodeURIComponent(shareUrl)}`,
+      messenger: `https://www.messenger.com/share?link=${encodeURIComponent(shareUrl)}`,
       whatsapp: `https://wa.me/?text=${encodeURIComponent(shareText + " " + shareUrl)}`,
       x: `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`,
     };
