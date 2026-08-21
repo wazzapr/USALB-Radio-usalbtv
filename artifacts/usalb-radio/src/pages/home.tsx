@@ -6,6 +6,7 @@ import logoSrc from "@assets/usalbradio_1775675611808.jpg";
 import { SiFacebook, SiWhatsapp, SiX, SiMessenger } from "react-icons/si";
 
 const FALLBACK_STREAM_URL = "https://uk4freenew.listen2myradio.com/live.mp3?typeportmount=s1_9311_stream_687568716";
+const PUBLIC_APP_URL = "https://usalb-radio-3--usalbtv.replit.app/";
 
 const ua = navigator.userAgent;
 const isIOS = /iP(hone|ad|od)/.test(ua);
@@ -50,7 +51,11 @@ export default function Home() {
   const isPlayingRef = useRef(false);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
 
-  const shareUrl = window.location.href;
+  // Never share Replit's temporary .replit.dev preview URL. It can show a
+  // warning or be unavailable to the recipient. Use the verified public URL
+  // while developing, and preserve the current URL on the published site.
+  const isTemporaryPreview = /(^localhost$|^127(?:\.\d{1,3}){3}$|\.replit\.dev$)/i.test(window.location.hostname);
+  const shareUrl = isTemporaryPreview ? PUBLIC_APP_URL : window.location.href;
   const shareText = "Listen to USALB RADIO — live Albanian broadcast!";
 
   useEffect(() => {
