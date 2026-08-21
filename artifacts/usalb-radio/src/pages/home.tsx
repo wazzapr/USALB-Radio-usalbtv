@@ -92,6 +92,28 @@ export default function Home() {
     // Messenger works best through its native app URL. The Web Share API
     // opens a second Messenger web view on iOS, which can remain blank.
     if (platform === "messenger") {
+      // If the page is already inside Messenger, launching Messenger again
+      // can leave the embedded browser stuck on "Loading".
+      if (isInFBBrowser) {
+        try {
+          if (navigator.share) {
+            await navigator.share({
+              title: "USALB RADIO",
+              text: shareText,
+              url: shareUrl,
+            });
+            setShareOpen(false);
+            return;
+          }
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            return;
+          }
+        }
+        copyLink();
+        return;
+      }
+
       const messengerUrl = `fb-messenger://share/?link=${encodeURIComponent(shareUrl)}`;
       window.location.href = messengerUrl;
       setShareOpen(false);
@@ -167,19 +189,9 @@ export default function Home() {
   }, []);
 
   const primerAndPlay = useCallback(async (audio: HTMLAudioElement, url: string) => {
-    // Open the official radio page in a hidden iframe to warm up the connection,
-    // then immediately attempt playback
+    // Retry the stream directly. The hidden warm-up iframe added delay and was
+    // unreliable inside Messenger's embedded browser.
     removePrimerIframe();
-    const iframe = document.createElement("iframe");
-    iframe.style.cssText = "position:fixed;width:1px;height:1px;border:0;opacity:0;pointer-events:none;left:-9999px;top:-9999px;";
-    iframe.src = "https://usalbradio.radiostream321.com/";
-    document.body.appendChild(iframe);
-    primerIframeRef.current = iframe;
-
-    // Give it 2 seconds to establish the connection, then play
-    await new Promise(r => setTimeout(r, 2000));
-    removePrimerIframe();
-
     audio.src = url + (url.includes("?") ? "&" : "?") + "_t=" + Date.now();
     audio.load();
     await audio.play();
@@ -218,7 +230,7 @@ export default function Home() {
       setIsLoading(false);
       setIsPlaying(false);
       setStreamOffline(true);
-      startRetryCountdown(10, () => attemptPlay(true));
+       startRetryCountdown(3, () => attemptPlay(true));
     }
   }, [clearRetryTimers, startRetryCountdown, primerAndPlay, removePrimerIframe]);
 
@@ -301,8 +313,25 @@ export default function Home() {
     const audio = audioRef.current;
     if (!audio) return;
     audio.volume = volume;
-    // Autoplay is blocked on most mobile browsers — that's fine, user taps play
-    audio.play().then(() => setIsPlaying(true)).catch(() => {});
+    audio.autoplay = true;
+
+    const tryAutoplay = () => {
+      if (!audio.paused) return;
+      audio.play().then(() => {
+        setIsPlaying(true);
+        setIsLoading(false);
+      }).catch(() => {});
+    };
+
+    // Try immediately, then retry after the first touch/click. The second
+    // attempt satisfies browsers that block sound until user interaction.
+    tryAutoplay();
+    window.addEventListener("pointerdown", tryAutoplay, { once: true });
+    window.addEventListener("touchstart", tryAutoplay, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", tryAutoplay);
+      window.removeEventListener("touchstart", tryAutoplay);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -315,7 +344,7 @@ export default function Home() {
       setIsPlaying(false);
       setIsLoading(false);
       setStreamOffline(true);
-      startRetryCountdown(10, () => attemptPlay(true));
+       startRetryCountdown(3, () => attemptPlay(true));
     };
     const handleStall = () => {
       const stallTimeout = setTimeout(() => {
@@ -323,9 +352,9 @@ export default function Home() {
           audio.pause();
           setIsPlaying(false);
           setStreamOffline(true);
-          startRetryCountdown(10, () => attemptPlay(true));
+           startRetryCountdown(3, () => attemptPlay(true));
         }
-      }, 10000);
+      }, 5000);
       const onPlaying = () => clearTimeout(stallTimeout);
       audio.addEventListener("playing", onPlaying, { once: true });
     };
@@ -610,6 +639,7 @@ export default function Home() {
         ref={audioRef} 
         src={FALLBACK_STREAM_URL}
         preload="auto"
+        autoPlay
         playsInline
       />
     </div>
