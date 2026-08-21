@@ -6,22 +6,23 @@ import logoSrc from "@assets/usalbradio_1775675611808.jpg";
 import { SiFacebook, SiWhatsapp, SiX, SiMessenger } from "react-icons/si";
 
 const FALLBACK_STREAM_URL = "https://uk4freenew.listen2myradio.com/live.mp3?typeportmount=s1_9311_stream_687568716";
-const APP_URL = "https://usalb-radio--usalbtv.replit.app/";
 
 const ua = navigator.userAgent;
 const isIOS = /iP(hone|ad|od)/.test(ua);
 const isAndroid = /Android/.test(ua);
 const isInFBBrowser = /FBAN|FBAV|FBIOS|FB_IAB|Instagram|Messenger/.test(ua);
 
-function openInSystemBrowser(setShowIOSHelp: (v: boolean) => void) {
+function openInSystemBrowser(url: string, setShowIOSHelp: (v: boolean) => void) {
   if (isAndroid) {
-    // Android: intent URL opens in the default browser
-    window.location.href = `intent://${APP_URL.replace(/^https?:\/\//, "")}#Intent;scheme=https;end`;
+    // Open this exact shared page in Android's default browser.
+    const destination = new URL(url);
+    const intentTarget = `${destination.host}${destination.pathname}${destination.search}${destination.hash}`;
+    window.location.href = `intent://${intentTarget}#Intent;scheme=https;end`;
   } else if (isIOS) {
     // iOS: can't open Safari programmatically — show step-by-step instructions
     setShowIOSHelp(true);
   } else {
-    window.open(APP_URL, "_blank");
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 }
 
@@ -191,6 +192,42 @@ export default function Home() {
     }
   }, [clearRetryTimers, startRetryCountdown, primerAndPlay, removePrimerIframe]);
 
+  // Media Session keeps Android Chrome's lock-screen notification and headset
+  // controls connected to the live player while the page is in the background.
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: "USALB RADIO",
+      artist: "Live Albanian Broadcast",
+      album: "USALB RADIO",
+      artwork: [{
+        src: new URL("/og-image.jpg", window.location.origin).href,
+        sizes: "1200x630",
+        type: "image/jpeg",
+      }],
+    });
+
+    const playFromMediaSession = () => {
+      if (!isPlayingRef.current) attemptPlay(false);
+    };
+    const pauseFromMediaSession = () => {
+      audioRef.current?.pause();
+      setIsPlaying(false);
+      clearRetryTimers();
+    };
+
+    navigator.mediaSession.setActionHandler("play", playFromMediaSession);
+    navigator.mediaSession.setActionHandler("pause", pauseFromMediaSession);
+    navigator.mediaSession.setActionHandler("stop", pauseFromMediaSession);
+
+    return () => {
+      navigator.mediaSession.setActionHandler("play", null);
+      navigator.mediaSession.setActionHandler("pause", null);
+      navigator.mediaSession.setActionHandler("stop", null);
+    };
+  }, [attemptPlay, clearRetryTimers]);
+
   const togglePlay = () => {
     if (isPlaying) {
       audioRef.current?.pause();
@@ -274,9 +311,11 @@ export default function Home() {
   // Reconnect automatically when the user returns to this tab while offline
   useEffect(() => {
     const handleVisibility = () => {
-      if (document.visibilityState === "visible" && streamOfflineRef.current) {
+      if (document.visibilityState === "visible" && (
+        streamOfflineRef.current || (isPlayingRef.current && audioRef.current?.paused)
+      )) {
         clearRetryTimers();
-        attemptPlay(true);
+        attemptPlay(streamOfflineRef.current);
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
@@ -293,7 +332,7 @@ export default function Home() {
             For the best experience and sound, open in your browser.
           </p>
           <button
-            onClick={() => openInSystemBrowser(setShowIOSHelp)}
+            onClick={() => openInSystemBrowser(shareUrl, setShowIOSHelp)}
             data-testid="button-open-in-browser"
             className="shrink-0 bg-white text-[#1877F2] text-sm font-bold px-4 py-1.5 rounded-full hover:bg-gray-100 transition-colors"
           >
@@ -541,6 +580,7 @@ export default function Home() {
         ref={audioRef} 
         src={FALLBACK_STREAM_URL}
         preload="auto"
+        playsInline
       />
     </div>
   );

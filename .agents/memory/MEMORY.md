@@ -1,0 +1,1 @@
+- [Published URL handling](published-url-handling.md) — derive user-shared links from the current page and verify production domains instead of assuming a prior generated hostname.
