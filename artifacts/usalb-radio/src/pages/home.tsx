@@ -43,6 +43,7 @@ export default function Home() {
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const primerIframeRef = useRef<HTMLIFrameElement | null>(null);
   const streamOfflineRef = useRef(false);
+  const initialAutoplayAttemptedRef = useRef(false);
   useEffect(() => { streamOfflineRef.current = streamOffline; }, [streamOffline]);
 
   // Use a ref for the stream URL so updating it NEVER causes a re-render
@@ -83,6 +84,18 @@ export default function Home() {
         // Only update the audio element src if the radio is not currently playing
         if (audioRef.current && !isPlayingRef.current) {
           audioRef.current.src = data.url;
+          // The first autoplay attempt can happen before the API responds.
+          // Try again as soon as the live stream URL is ready.
+          if (!initialAutoplayAttemptedRef.current) {
+            initialAutoplayAttemptedRef.current = true;
+            audioRef.current.load();
+            audioRef.current.play().then(() => {
+              setIsPlaying(true);
+              setIsLoading(false);
+            }).catch(() => {
+              // Android may require a user gesture before audible playback.
+            });
+          }
         }
       } catch {
         // Keep the fallback already set on the audio element
