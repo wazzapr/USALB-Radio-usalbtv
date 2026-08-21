@@ -94,6 +94,21 @@ export default function Home() {
   }, []);
 
   const shareOn = async (platform: "facebook" | "messenger" | "whatsapp" | "x") => {
+    // Facebook's web share page can render as a blank Messenger web view.
+    // Try the Facebook app directly when this page is already inside an
+    // in-app browser, then fall back to Facebook's web sharer if needed.
+    if (platform === "facebook" && isInFBBrowser) {
+      const facebookWebUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`;
+      window.location.href = `fb://share?link=${encodeURIComponent(shareUrl)}`;
+      setShareOpen(false);
+      window.setTimeout(() => {
+        if (document.visibilityState === "visible") {
+          window.location.href = facebookWebUrl;
+        }
+      }, 900);
+      return;
+    }
+
     // Messenger works best through its native app URL. The Web Share API
     // opens a second Messenger web view on iOS, which can remain blank.
     if (platform === "messenger") {
