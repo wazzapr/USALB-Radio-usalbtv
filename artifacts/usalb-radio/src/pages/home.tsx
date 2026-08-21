@@ -89,9 +89,17 @@ export default function Home() {
   }, []);
 
   const shareOn = async (platform: "facebook" | "messenger" | "whatsapp" | "x") => {
+    // Messenger works best through its native app URL. The Web Share API
+    // opens a second Messenger web view on iOS, which can remain blank.
+    if (platform === "messenger") {
+      const messengerUrl = `fb-messenger://share/?link=${encodeURIComponent(shareUrl)}`;
+      window.location.href = messengerUrl;
+      setShareOpen(false);
+      return;
+    }
+
     // On phones, use the operating system share sheet. This avoids opening
-    // Messenger's unreliable blank in-app share page and lets the user choose
-    // the installed app directly.
+    // unreliable social web views and lets the user choose the installed app.
     if (isIOS || isAndroid) {
       try {
         if (navigator.share) {
@@ -559,7 +567,7 @@ export default function Home() {
                       <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#00B2FF] to-[#006AFF] flex items-center justify-center shrink-0">
                         <SiMessenger className="w-4 h-4 text-white" />
                       </div>
-                      <span className="text-white font-medium text-sm">Messenger</span>
+                       <span className="text-white font-medium text-sm">Open Messenger</span>
                     </button>
                     <button
                       onClick={() => shareOn("whatsapp")}
