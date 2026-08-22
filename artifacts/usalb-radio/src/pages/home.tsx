@@ -105,7 +105,10 @@ export default function Home() {
       const browserUrl = currentUrl.replace(/^https?:\/\//i, "");
       window.location.href = `intent://${browserUrl}#Intent;scheme=https;package=com.android.chrome;end`;
     } else {
-      window.open(currentUrl, "_blank", "noopener,noreferrer");
+      // Messenger and other iOS webviews keep ordinary https links inside
+      // themselves. The Safari URL scheme is the best available handoff.
+      const safariUrl = currentUrl.replace(/^https?:\/\//i, "");
+      window.location.href = `x-safari-https://${safariUrl}`;
     }
     window.setTimeout(() => {
       if (document.visibilityState === "visible") setInstallHelpMode("fallback");
