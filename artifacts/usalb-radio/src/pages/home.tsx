@@ -14,6 +14,14 @@ const isInFBBrowser = /FBAN|FBAV|FBIOS|FB_IAB|Instagram|Messenger/.test(ua);
 const isStandaloneDisplay = window.matchMedia("(display-mode: standalone)").matches
   || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
 
+const isAutoplayBlockedError = (error: unknown) => {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: string; code?: number; message?: string };
+  return candidate.name === "NotAllowedError"
+    || candidate.code === 9
+    || /autoplay|user.?gesture|play\(\).*not allowed/i.test(candidate.message ?? "");
+};
+
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
@@ -40,6 +48,7 @@ export default function Home() {
   const playAttemptRef = useRef(false);
   const streamOfflineRef = useRef(false);
   const hasPlayedOnceRef = useRef(false);
+  const autoplayBlockedRef = useRef(false);
   useEffect(() => { streamOfflineRef.current = streamOffline; }, [streamOffline]);
 
   // Use a ref for the stream URL so updating it NEVER causes a re-render
@@ -214,9 +223,10 @@ export default function Home() {
     await audio.play();
   }, [removePrimerIframe]);
 
-  const attemptPlay = useCallback(async (isRetry = false) => {
+  const attemptPlay = useCallback(async (isRetry = false, fromUserGesture = false) => {
     const audio = audioRef.current;
     if (!audio || playAttemptRef.current) return;
+    if (autoplayBlockedRef.current && !fromUserGesture) return;
     playAttemptRef.current = true;
     setIsLoading(true);
     // Always fetch the current station URL before trying audio. The provider
@@ -238,6 +248,7 @@ export default function Home() {
       }
       setIsPlaying(true);
       hasPlayedOnceRef.current = true;
+      autoplayBlockedRef.current = false;
       setStreamOffline(false);
       setAutoplayBlocked(false);
       clearRetryTimers();
@@ -246,7 +257,8 @@ export default function Home() {
       setIsPlaying(false);
       // Browser autoplay restrictions are not a station outage. Explain the
       // required user action instead of showing a misleading reconnect loop.
-      if (error instanceof DOMException && error.name === "NotAllowedError") {
+      if (isAutoplayBlockedError(error)) {
+        autoplayBlockedRef.current = true;
         setAutoplayBlocked(true);
         setStreamOffline(false);
         clearRetryTimers();
@@ -279,7 +291,7 @@ export default function Home() {
     });
 
     const playFromMediaSession = () => {
-      if (!isPlayingRef.current) attemptPlay(false);
+      if (!isPlayingRef.current) attemptPlay(false, true);
     };
     const pauseFromMediaSession = () => {
       audioRef.current?.pause();
@@ -306,7 +318,9 @@ export default function Home() {
       setStreamOffline(false);
       removePrimerIframe();
     } else {
-      attemptPlay(streamOffline);
+      autoplayBlockedRef.current = false;
+      setAutoplayBlocked(false);
+      attemptPlay(streamOffline, true);
     }
   };
 
@@ -336,29 +350,31 @@ export default function Home() {
     }
   };
 
-  // Attempt autoplay once on mount.
+  // Attempt autoplay once on mount. The explicit play() call is controlled
+  // here instead of also relying on the audio element's autoplay attribute.
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
     audio.volume = volume;
-    audio.autoplay = true;
 
-    const tryAutoplay = () => {
+    const tryAutoplay = (fromUserGesture = false) => {
       if (!audio.paused) return;
-      attemptPlay(false);
+      attemptPlay(false, fromUserGesture);
     };
 
-    // Try immediately, then retry after the first touch/click. If the stream
-    // is not ready, attemptPlay shows the reconnect countdown and retries.
+    // Try once immediately. If the browser blocks it, the play button is the
+    // only thing that can start audio; do not keep triggering rejected plays.
     const startupTimer = window.setTimeout(tryAutoplay, 150);
+    const tryAutoplayFromPointer = () => tryAutoplay(true);
+    const tryAutoplayFromTouch = () => tryAutoplay(true);
     audio.addEventListener("canplay", tryAutoplay);
-    window.addEventListener("pointerdown", tryAutoplay, { once: true });
-    window.addEventListener("touchstart", tryAutoplay, { once: true });
+    window.addEventListener("pointerdown", tryAutoplayFromPointer, { once: true });
+    window.addEventListener("touchstart", tryAutoplayFromTouch, { once: true });
     return () => {
       window.clearTimeout(startupTimer);
       audio.removeEventListener("canplay", tryAutoplay);
-      window.removeEventListener("pointerdown", tryAutoplay);
-      window.removeEventListener("touchstart", tryAutoplay);
+      window.removeEventListener("pointerdown", tryAutoplayFromPointer);
+      window.removeEventListener("touchstart", tryAutoplayFromTouch);
     };
   }, [attemptPlay]);
 
@@ -733,7 +749,6 @@ export default function Home() {
       <audio 
         ref={audioRef} 
         preload="auto"
-        autoPlay
         playsInline
       />
     </div>
