@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 import logoSrc from "@assets/usalbradio_1775675611808.jpg";
 import { SiFacebook, SiWhatsapp, SiX, SiMessenger } from "react-icons/si";
 
-const FALLBACK_STREAM_URL = "https://uk4freenew.listen2myradio.com/live.mp3?typeportmount=s1_9311_stream_687568716";
 const PUBLIC_APP_URL = "https://usalb-radio-3--usalbtv.replit.app/";
 
 const ua = navigator.userAgent;
@@ -42,12 +41,13 @@ export default function Home() {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const primerIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const playAttemptRef = useRef(false);
   const streamOfflineRef = useRef(false);
   useEffect(() => { streamOfflineRef.current = streamOffline; }, [streamOffline]);
 
   // Use a ref for the stream URL so updating it NEVER causes a re-render
   // or audio interruption. The audio element src is set imperatively.
-  const streamUrlRef = useRef(FALLBACK_STREAM_URL);
+  const streamUrlRef = useRef("");
   const isPlayingRef = useRef(false);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
 
@@ -66,31 +66,6 @@ export default function Home() {
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // Fetch the live stream URL. Store it in a ref only.
-  // If the radio is already playing, leave it completely alone.
-  // If not playing, update the audio src so the next play uses the fresh URL.
-  useEffect(() => {
-    let cancelled = false;
-    const fetchUrl = async () => {
-      try {
-        const res = await fetch("/api/stream-url");
-        if (!res.ok) throw new Error("API error");
-        const data = await res.json();
-        if (cancelled || !data.url) return;
-        streamUrlRef.current = data.url;
-        // Only update the audio element src if the radio is not currently playing
-        if (audioRef.current && !isPlayingRef.current) {
-          audioRef.current.src = data.url;
-        }
-      } catch {
-        // Keep the fallback already set on the audio element
-      }
-    };
-    fetchUrl();
-    const interval = setInterval(fetchUrl, 5 * 60 * 1000);
-    return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
   const shareOn = async (platform: "facebook" | "messenger" | "whatsapp" | "x") => {
@@ -216,22 +191,19 @@ export default function Home() {
 
   const attemptPlay = useCallback(async (isRetry = false) => {
     const audio = audioRef.current;
-    if (!audio) return;
-    // Fetch fresh URL before each play attempt; bust server cache on retries
-    try {
-      const qs = isRetry ? "?fresh=1" : "";
-      const res = await fetch(`/api/stream-url${qs}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.url) {
-          streamUrlRef.current = data.url;
-        }
-      }
-    } catch { /* use existing url */ }
-
+    if (!audio || playAttemptRef.current) return;
+    playAttemptRef.current = true;
     setIsLoading(true);
-    setStreamOffline(false);
+    // Always fetch the current station URL before trying audio. The provider
+    // can rotate the stream id, and the old URL may fail on first page load.
     try {
+      const res = await fetch("/api/stream-url?fresh=1", { cache: "no-store" });
+      if (!res.ok) throw new Error("Stream URL unavailable");
+      const data = await res.json();
+      if (!data.url) throw new Error("Stream URL missing");
+      streamUrlRef.current = data.url;
+      if (!streamUrlRef.current) throw new Error("Stream URL missing");
+
       if (isRetry) {
         await primerAndPlay(audio, streamUrlRef.current);
       } else {
@@ -240,14 +212,18 @@ export default function Home() {
         await audio.play();
       }
       setIsPlaying(true);
-      setIsLoading(false);
+      setStreamOffline(false);
       clearRetryTimers();
     } catch {
       removePrimerIframe();
-      setIsLoading(false);
       setIsPlaying(false);
       setStreamOffline(true);
-       startRetryCountdown(isRetry ? 3 : 10, () => attemptPlay(true));
+      // Three seconds keeps the first connection feeling direct while still
+      // allowing the station provider time to become ready.
+      startRetryCountdown(3, () => attemptPlay(true));
+    } finally {
+      playAttemptRef.current = false;
+      setIsLoading(false);
     }
   }, [clearRetryTimers, startRetryCountdown, primerAndPlay, removePrimerIframe]);
 
@@ -661,7 +637,6 @@ export default function Home() {
 
       <audio 
         ref={audioRef} 
-        src={FALLBACK_STREAM_URL}
         preload="auto"
         autoPlay
         playsInline
