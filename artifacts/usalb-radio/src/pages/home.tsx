@@ -5,8 +5,6 @@ import { cn } from "@/lib/utils";
 import logoSrc from "@assets/usalbradio_1775675611808.jpg";
 import { SiFacebook, SiWhatsapp, SiX, SiMessenger } from "react-icons/si";
 
-const PUBLIC_APP_URL = "https://usalb-radio-3--usalbtv.replit.app/";
-
 const ua = navigator.userAgent;
 const isIOS = /iP(hone|ad|od)/.test(ua);
 const isAndroid = /Android/.test(ua);
@@ -76,11 +74,15 @@ export default function Home() {
     };
   }, []);
 
-  // Never share Replit's temporary .replit.dev preview URL. It can show a
-  // warning or be unavailable to the recipient. Use the verified public URL
-  // while developing, and preserve the current URL on the published site.
-  const isTemporaryPreview = /(^localhost$|^127(?:\.\d{1,3}){3}$|\.replit\.dev$)/i.test(window.location.hostname);
-  const shareUrl = isTemporaryPreview ? PUBLIC_APP_URL : window.location.href;
+  // Share the canonical page URL without transient query/hash state. This
+  // keeps copied links valid on both the preview and the published site and
+  // avoids sending stream/cache parameters to social platforms.
+  const shareUrl = (() => {
+    const url = new URL(window.location.href);
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  })();
   const shareText = "Listen to USALB RADIO — live Albanian broadcast!";
 
   const handleInstall = async () => {
@@ -182,7 +184,7 @@ export default function Home() {
       facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`,
       messenger: `https://www.messenger.com/share?link=${encodeURIComponent(shareUrl)}`,
       whatsapp: `https://wa.me/?text=${encodeURIComponent(shareText + " " + shareUrl)}`,
-      x: `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`,
+      x: `https://x.com/intent/post?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`,
     };
     window.open(urls[platform], "_blank", "noopener,noreferrer");
     setShareOpen(false);
@@ -751,6 +753,16 @@ export default function Home() {
                         <SiWhatsapp className="w-4 h-4 text-white" />
                       </div>
                       <span className="text-white font-medium text-sm">WhatsApp</span>
+                    </button>
+                    <button
+                      onClick={() => shareOn("x")}
+                      data-testid="button-share-x"
+                      className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 transition-colors text-left w-full"
+                    >
+                      <div className="w-9 h-9 rounded-full bg-black border border-white/20 flex items-center justify-center shrink-0">
+                        <SiX className="w-4 h-4 text-white" />
+                      </div>
+                      <span className="text-white font-medium text-sm">X</span>
                     </button>
                     <button
                       onClick={copyLink}
