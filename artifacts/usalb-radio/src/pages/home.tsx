@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Play, Pause, Volume2, VolumeX, Radio, Copy, Check, Share2, RefreshCw, WifiOff, Download, X } from "lucide-react";
+import { Play, Pause, Volume2, VolumeX, Radio, Copy, Check, Share2, RefreshCw, WifiOff, Download, X, ArrowUp } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import logoSrc from "@assets/usalbradio_1775675611808.jpg";
@@ -10,7 +10,7 @@ const PUBLIC_APP_URL = "https://usalb-radio-3--usalbtv.replit.app/";
 const ua = navigator.userAgent;
 const isIOS = /iP(hone|ad|od)/.test(ua);
 const isAndroid = /Android/.test(ua);
-const isInFBBrowser = /FBAN|FBAV|FBIOS|FB_IAB|Instagram|Messenger/.test(ua);
+const isInAppBrowser = /FBAN|FBAV|FBIOS|FB_IAB|Instagram|Messenger|TikTok|musical_ly|Line\//i.test(ua);
 const isStandaloneDisplay = window.matchMedia("(display-mode: standalone)").matches
   || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
 
@@ -39,6 +39,7 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [showInstallHelp, setShowInstallHelp] = useState(false);
+  const [installHelpMode, setInstallHelpMode] = useState<"steps" | "external" | "fallback">("steps");
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(isStandaloneDisplay);
   const shareRef = useRef<HTMLDivElement>(null);
@@ -89,7 +90,26 @@ export default function Home() {
       if (choice.outcome === "accepted") setInstallPrompt(null);
       return;
     }
+    if ((isIOS || isAndroid) && isInAppBrowser) {
+      setInstallHelpMode("external");
+      setShowInstallHelp(true);
+      return;
+    }
+    setInstallHelpMode("steps");
     setShowInstallHelp(true);
+  };
+
+  const openExternalBrowser = () => {
+    const currentUrl = window.location.href;
+    if (isAndroid) {
+      const browserUrl = currentUrl.replace(/^https?:\/\//i, "");
+      window.location.href = `intent://${browserUrl}#Intent;scheme=https;package=com.android.chrome;end`;
+    } else {
+      window.open(currentUrl, "_blank", "noopener,noreferrer");
+    }
+    window.setTimeout(() => {
+      if (document.visibilityState === "visible") setInstallHelpMode("fallback");
+    }, 900);
   };
 
   useEffect(() => {
@@ -106,7 +126,7 @@ export default function Home() {
     // Facebook's web share page can render as a blank Messenger web view.
     // Try the Facebook app directly when this page is already inside an
     // in-app browser, then fall back to Facebook's web sharer if needed.
-    if (platform === "facebook" && isInFBBrowser) {
+    if (platform === "facebook" && isInAppBrowser) {
       const facebookWebUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`;
       window.location.href = `fb://share?link=${encodeURIComponent(shareUrl)}`;
       setShareOpen(false);
@@ -123,7 +143,7 @@ export default function Home() {
     if (platform === "messenger") {
       // If the page is already inside Messenger, launching Messenger again
       // can leave the embedded browser stuck on "Loading".
-      if (isInFBBrowser) {
+      if (isInAppBrowser) {
         copyLink();
         return;
       }
@@ -462,58 +482,67 @@ export default function Home() {
             >
               <X className="w-5 h-5" />
             </button>
-            <h2 className="text-white text-lg font-semibold mb-2 text-center">
-              {isIOS && isInFBBrowser
-                ? "Open USALB RADIO in Safari"
-                : isIOS
-                ? "Install USALB RADIO on iPhone"
-                : "Install USALB RADIO"}
-            </h2>
-            <p className="text-gray-400 text-sm text-center mb-6">
-              {isIOS && isInFBBrowser
-                ? "Messenger cannot install apps. Open this page in Safari first:"
-                : isIOS
-                ? "In Safari, follow these steps:"
-                : "Use your browser's install option to add the radio to your home screen:"}
-            </p>
-            <ol className="space-y-4 mb-8">
-              <li className="flex items-start gap-3">
-                <span className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold shrink-0">1</span>
-                <p className="text-white text-sm pt-0.5">
-                  {isIOS && isInFBBrowser
-                    ? <>Tap the <strong>…</strong> menu at the top</>
-                    : isIOS
-                    ? <>Tap the <strong>Share</strong> button in Safari</>
-                    : <>Open your browser menu</>}
+            {installHelpMode === "external" ? (
+              <>
+                <h2 className="text-white text-xl font-semibold mb-3 text-center">
+                  {isIOS ? "Open USALB RADIO in Safari" : "Open USALB RADIO in your browser"}
+                </h2>
+                <p className="text-gray-300 text-sm text-center mb-6">
+                  {isIOS
+                    ? "To install USALB RADIO, first open it in Safari."
+                    : "To install USALB RADIO, first open it in Chrome or your browser."}
                 </p>
-              </li>
-              <li className="flex items-start gap-3">
-                <span className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold shrink-0">2</span>
-                <p className="text-white text-sm pt-0.5">
-                  {isIOS && isInFBBrowser
-                    ? <>Tap <strong>Open in browser</strong> or <strong>Open in Safari</strong></>
-                    : isIOS
-                    ? <>Scroll down</>
-                    : <>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong></>}
+                <button
+                  onClick={openExternalBrowser}
+                  className="w-full py-4 rounded-2xl bg-red-600 text-white text-base font-semibold hover:bg-red-500 transition-colors shadow-lg shadow-red-950/40"
+                >
+                  {isIOS ? "Open in Safari" : "Open in Chrome"}
+                </button>
+              </>
+            ) : installHelpMode === "fallback" ? (
+              <>
+                <div className="flex justify-center mb-2 text-red-500">
+                  <ArrowUp className="w-10 h-10 animate-bounce" />
+                </div>
+                <h2 className="text-white text-xl font-semibold mb-2 text-center">Almost there!</h2>
+                <p className="text-gray-300 text-base text-center leading-relaxed mb-6">
+                  Tap the <strong className="text-white">•••</strong> button at the top,
+                  <br />
+                  then tap <strong className="text-white">Open in Browser</strong>.
                 </p>
-              </li>
-              {isIOS && (
-                <>
+              </>
+            ) : (
+              <>
+                <h2 className="text-white text-lg font-semibold mb-2 text-center">
+                  {isIOS ? "Install USALB RADIO on iPhone" : "Install USALB RADIO"}
+                </h2>
+                <p className="text-gray-400 text-sm text-center mb-6">
+                  {isIOS
+                    ? "In Safari, follow these simple steps:"
+                    : "Use your browser's install option to add the radio to your home screen:"}
+                </p>
+                <ol className="space-y-4 mb-8">
                   <li className="flex items-start gap-3">
-                    <span className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold shrink-0">3</span>
-                    <p className="text-white text-sm pt-0.5">
-                      {isInFBBrowser ? <>In Safari, tap the <strong>Share</strong> button</> : <>Tap <strong>Add to Home Screen</strong></>}
+                    <span className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center text-white text-sm font-bold shrink-0">1</span>
+                    <p className="text-white text-sm pt-1">
+                      {isIOS ? <>Tap the <strong>Share</strong> button</> : <>Open your browser menu</>}
                     </p>
                   </li>
                   <li className="flex items-start gap-3">
-                    <span className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold shrink-0">4</span>
-                    <p className="text-white text-sm pt-0.5">
-                      {isInFBBrowser ? <>Tap <strong>Add to Home Screen</strong>, then <strong>Add</strong></> : <>Tap <strong>Add</strong></>}
+                    <span className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center text-white text-sm font-bold shrink-0">2</span>
+                    <p className="text-white text-sm pt-1">
+                      {isIOS ? <>Tap <strong>Add to Home Screen</strong></> : <>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong></>}
                     </p>
                   </li>
-                </>
-              )}
-            </ol>
+                  {isIOS && (
+                    <li className="flex items-start gap-3">
+                      <span className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center text-white text-sm font-bold shrink-0">3</span>
+                      <p className="text-white text-sm pt-1">Tap <strong>Add</strong></p>
+                    </li>
+                  )}
+                </ol>
+              </>
+            )}
             <button onClick={() => setShowInstallHelp(false)} className="w-full py-3 rounded-2xl bg-white/10 text-white text-sm font-medium hover:bg-white/20 transition-colors">
               Got it
             </button>
@@ -707,7 +736,7 @@ export default function Home() {
                         <SiMessenger className="w-4 h-4 text-white" />
                       </div>
                        <span className="text-white font-medium text-sm">
-                         {isInFBBrowser ? "Copy link for Messenger" : "Open Messenger"}
+                         {isInAppBrowser ? "Copy link for Messenger" : "Open Messenger"} 
                        </span>
                     </button>
                     <button

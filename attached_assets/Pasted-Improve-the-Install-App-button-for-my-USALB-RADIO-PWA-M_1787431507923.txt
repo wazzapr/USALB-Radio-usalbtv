@@ -1,0 +1,84 @@
+Improve the "Install App" button for my USALB RADIO PWA.
+
+My listeners are not technical, so I want the installation process to be as simple and automatic as possible.
+
+IMPORTANT:
+Keep my existing radio website, player, design and functionality unchanged. Only improve the Install App flow.
+
+WHEN THE USER PRESSES "INSTALL APP":
+
+1. ANDROID:
+- If the browser supports PWA installation, immediately show the native PWA install prompt.
+- The user should only need to press "Install".
+- Do not show instructions unless the automatic install prompt is unavailable.
+
+2. iPHONE / iPAD IN SAFARI:
+- Show a very simple installation popup with only:
+  Step 1: Tap the Share button
+  Step 2: Tap "Add to Home Screen"
+  Step 3: Tap "Add"
+- Use large icons and buttons so non-technical users can understand.
+- Keep the popup clean and simple.
+
+3. iPHONE / iPAD INSIDE MESSENGER, FACEBOOK, INSTAGRAM, TIKTOK OR OTHER IN-APP BROWSERS:
+
+Show a popup saying:
+
+"To install USALB RADIO, first open it in Safari."
+
+Add ONE BIG PRIMARY BUTTON:
+
+"Open in Safari"
+
+When the user presses this button:
+- Automatically attempt to open the current website in Safari or the device's default external browser.
+- Preserve the exact current page URL.
+- Use the best supported deep-link or external browser method available.
+- If the browser allows automatic opening, open the website outside Messenger/Facebook/Instagram immediately.
+
+If iOS blocks automatic opening:
+- Show a second screen with very simple instructions.
+- Highlight the THREE DOTS (...) menu at the top of the screen.
+- Tell the user:
+  "Tap the ••• button at the top, then tap Open in Browser."
+- If possible, use a simple visual arrow pointing toward the three-dot menu.
+- Do not show long technical explanations.
+
+4. IMPORTANT USER EXPERIENCE:
+- Users should first see the large "Open in Safari" button.
+- Do not immediately show a long list of instructions.
+- First try the automatic action.
+- Only show instructions if the automatic action is blocked by iOS or the in-app browser.
+
+5. ANDROID IN-APP BROWSERS:
+- Try to trigger the native PWA installation prompt if available.
+- If not available, show a large "Open in Chrome" or "Open in Browser" button.
+- Attempt to open the current URL in the external browser.
+
+6. FALLBACK SCREEN:
+If automatic opening is blocked, show:
+
+"Almost there! 👋"
+
+"Tap the ••• button at the top"
+
+"Then tap Open in Browser"
+
+Use:
+- Large text
+- Large icons
+- A simple arrow pointing upward toward the menu
+- A big "Got it" button
+
+7. DO NOT:
+- Change the radio player.
+- Break the audio stream.
+- Remove existing features.
+- Create an APK download.
+- Show complicated technical language.
+
+8. Detect whether the app is already installed.
+If it is installed in standalone mode, hide the Install App button.
+
+IMPORTANT:
+Implement the best possible automatic external-browser opening behavior, but respect iOS restrictions. If Safari cannot be opened automatically from Messenger/Facebook/Instagram, immediately guide the user with the simplest possible visual instructions.
