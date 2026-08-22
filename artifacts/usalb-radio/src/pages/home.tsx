@@ -356,19 +356,25 @@ export default function Home() {
     const audio = audioRef.current;
     if (!audio) return;
     const handleError = () => {
-      if (!isPlayingRef.current) return;
+      // A failed initial load is handled by attemptPlay with the 10-second
+      // startup retry. Only use the faster retry after real playback began.
+      if (!isPlayingRef.current || streamOfflineRef.current) return;
       setIsPlaying(false);
       setIsLoading(false);
       setStreamOffline(true);
-       startRetryCountdown(3, () => attemptPlay(true));
+      startRetryCountdown(3, () => attemptPlay(true));
     };
     const handleStall = () => {
+      // Browsers can emit "stalled" while the first connection is still
+      // being established. Do not turn that startup failure into a 3-second
+      // loop or compete with attemptPlay's 10-second retry.
+      if (!isPlayingRef.current || streamOfflineRef.current) return;
       const stallTimeout = setTimeout(() => {
-        if (isPlayingRef.current) {
+        if (isPlayingRef.current && !streamOfflineRef.current) {
           audio.pause();
           setIsPlaying(false);
           setStreamOffline(true);
-           startRetryCountdown(3, () => attemptPlay(true));
+          startRetryCountdown(3, () => attemptPlay(true));
         }
       }, 5000);
       const onPlaying = () => clearTimeout(stallTimeout);
