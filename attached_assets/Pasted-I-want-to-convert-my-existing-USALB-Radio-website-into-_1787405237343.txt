@@ -1,0 +1,77 @@
+I want to convert my existing USALB Radio website into a fully installable Progressive Web App (PWA).
+
+IMPORTANT:
+Do not redesign, remove, or break any existing features. Keep the current design, radio player, live stream, and all functionality exactly as they are.
+
+MAIN CHANGE:
+Replace the current "Open in Browser" button with a button called:
+
+"Download App"
+
+with a download/install icon.
+
+The button should intelligently work depending on the device and browser:
+
+ANDROID:
+- When the user clicks "Download App", trigger the official PWA installation prompt using beforeinstallprompt.
+- If the app is already installed, hide the Download App button.
+- If the installation prompt is not available, show clear instructions to install the app through the browser menu.
+
+iPHONE / iPAD:
+- Detect iOS devices.
+- When the user clicks "Download App", show a popup with these instructions:
+  1. Tap the Share button in Safari
+  2. Scroll down
+  3. Tap "Add to Home Screen"
+  4. Tap "Add"
+- Include a close button.
+- If the PWA is already installed, hide the Download App button.
+
+DESKTOP:
+- If supported, trigger the browser PWA installation prompt.
+- Otherwise show instructions explaining how to install the app from the browser.
+
+PWA REQUIREMENTS:
+1. Create or update manifest.json
+2. Register a service worker
+3. Create proper 192x192 and 512x512 app icons
+4. Use the existing USALB Radio logo for the app icon if possible
+5. Set display to standalone
+6. Add theme_color and background_color
+7. Add proper Apple iOS meta tags:
+   - apple-mobile-web-app-capable
+   - apple-mobile-web-app-status-bar-style
+   - apple-mobile-web-app-title
+   - apple-touch-icon
+
+SERVICE WORKER:
+- Cache the website interface and static files.
+- Do NOT cache the live radio stream.
+- Do not break live streaming.
+- Make sure updates can be received when I update the website.
+
+RADIO REQUIREMENTS:
+- Keep the current radio player exactly as it works.
+- Keep the live stream working.
+- The Download App button must not interfere with the audio player.
+- When the PWA is installed, make it open in standalone app mode without the normal browser interface.
+
+BUTTON DESIGN:
+- Replace ONLY the existing "Open in Browser" button.
+- Keep the button in the same location.
+- Use the same style as the existing design.
+- Change the text to "Download App".
+- Add a modern download/install icon.
+- Make it responsive for mobile and desktop.
+- If the app is already installed, automatically hide this button.
+
+IMPORTANT:
+Before making changes, inspect the existing project structure and identify the current "Open in Browser" button. Modify the existing code instead of creating duplicate buttons.
+
+After finishing:
+- Test that the PWA can be installed.
+- Test the Android installation flow.
+- Test the iPhone/iPad installation instructions.
+- Test the desktop installation flow.
+- Make sure the radio still works.
+- Tell me exactly which files you created or modified.

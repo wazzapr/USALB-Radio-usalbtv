@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Play, Pause, Volume2, VolumeX, Radio, Copy, Check, Share2, RefreshCw, WifiOff } from "lucide-react";
+import { Play, Pause, Volume2, VolumeX, Radio, Copy, Check, Share2, RefreshCw, WifiOff, Download, X } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import logoSrc from "@assets/usalbradio_1775675611808.jpg";
@@ -11,19 +11,12 @@ const ua = navigator.userAgent;
 const isIOS = /iP(hone|ad|od)/.test(ua);
 const isAndroid = /Android/.test(ua);
 const isInFBBrowser = /FBAN|FBAV|FBIOS|FB_IAB|Instagram|Messenger/.test(ua);
+const isStandaloneDisplay = window.matchMedia("(display-mode: standalone)").matches
+  || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
 
-function openInSystemBrowser(url: string, setShowIOSHelp: (v: boolean) => void) {
-  if (isAndroid) {
-    // Open this exact shared page in Android's default browser.
-    const destination = new URL(url);
-    const intentTarget = `${destination.host}${destination.pathname}${destination.search}${destination.hash}`;
-    window.location.href = `intent://${intentTarget}#Intent;scheme=https;end`;
-  } else if (isIOS) {
-    // iOS: can't open Safari programmatically — show step-by-step instructions
-    setShowIOSHelp(true);
-  } else {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 }
 
 export default function Home() {
@@ -33,16 +26,20 @@ export default function Home() {
   const [isMuted, setIsMuted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [streamOffline, setStreamOffline] = useState(false);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [retryCountdown, setRetryCountdown] = useState(0);
   const [copied, setCopied] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
-  const [showIOSHelp, setShowIOSHelp] = useState(false);
+  const [showInstallHelp, setShowInstallHelp] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isInstalled, setIsInstalled] = useState(isStandaloneDisplay);
   const shareRef = useRef<HTMLDivElement>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const primerIframeRef = useRef<HTMLIFrameElement | null>(null);
   const playAttemptRef = useRef(false);
   const streamOfflineRef = useRef(false);
+  const hasPlayedOnceRef = useRef(false);
   useEffect(() => { streamOfflineRef.current = streamOffline; }, [streamOffline]);
 
   // Use a ref for the stream URL so updating it NEVER causes a re-render
@@ -51,12 +48,40 @@ export default function Home() {
   const isPlayingRef = useRef(false);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
 
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const handleInstalled = () => {
+      setInstallPrompt(null);
+      setIsInstalled(true);
+      setShowInstallHelp(false);
+    };
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleInstalled);
+    };
+  }, []);
+
   // Never share Replit's temporary .replit.dev preview URL. It can show a
   // warning or be unavailable to the recipient. Use the verified public URL
   // while developing, and preserve the current URL on the published site.
   const isTemporaryPreview = /(^localhost$|^127(?:\.\d{1,3}){3}$|\.replit\.dev$)/i.test(window.location.hostname);
   const shareUrl = isTemporaryPreview ? PUBLIC_APP_URL : window.location.href;
   const shareText = "Listen to USALB RADIO — live Albanian broadcast!";
+
+  const handleInstall = async () => {
+    if (installPrompt) {
+      await installPrompt.prompt();
+      const choice = await installPrompt.userChoice;
+      if (choice.outcome === "accepted") setInstallPrompt(null);
+      return;
+    }
+    setShowInstallHelp(true);
+  };
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -212,15 +237,25 @@ export default function Home() {
         await audio.play();
       }
       setIsPlaying(true);
+      hasPlayedOnceRef.current = true;
       setStreamOffline(false);
+      setAutoplayBlocked(false);
       clearRetryTimers();
-    } catch {
+    } catch (error) {
       removePrimerIframe();
       setIsPlaying(false);
-      setStreamOffline(true);
-      // Three seconds keeps the first connection feeling direct while still
-      // allowing the station provider time to become ready.
-      startRetryCountdown(3, () => attemptPlay(true));
+      // Browser autoplay restrictions are not a station outage. Explain the
+      // required user action instead of showing a misleading reconnect loop.
+      if (error instanceof DOMException && error.name === "NotAllowedError") {
+        setAutoplayBlocked(true);
+        setStreamOffline(false);
+        clearRetryTimers();
+      } else {
+        setStreamOffline(true);
+        // Three seconds keeps the first connection feeling direct while still
+        // allowing the station provider time to become ready.
+        startRetryCountdown(3, () => attemptPlay(true));
+      }
     } finally {
       playAttemptRef.current = false;
       setIsLoading(false);
@@ -382,40 +417,65 @@ export default function Home() {
 
   return (
     <div className="min-h-[100dvh] bg-black text-white flex flex-col items-center justify-center relative overflow-hidden font-sans">
-      {/* Open-in-Browser Banner — only visible inside Facebook / Messenger */}
-      {isInFBBrowser && (
+      {/* Install banner replaces the former browser-opening action. */}
+      {!isInstalled && (
         <div className="fixed top-0 left-0 right-0 z-50 bg-[#1877F2] px-4 py-3 flex items-center justify-between gap-3 shadow-lg">
           <p className="text-white text-sm font-medium leading-tight">
-            For the best experience and sound, open in your browser.
+            Install USALB RADIO for quick access and background playback.
           </p>
           <button
-            onClick={() => openInSystemBrowser(shareUrl, setShowIOSHelp)}
-            data-testid="button-open-in-browser"
+            onClick={handleInstall}
+            data-testid="button-download-app"
             className="shrink-0 bg-white text-[#1877F2] text-sm font-bold px-4 py-1.5 rounded-full hover:bg-gray-100 transition-colors"
           >
-            Open
+            <span className="inline-flex items-center gap-1.5"><Download className="w-4 h-4" />Download App</span>
           </button>
         </div>
       )}
 
-      {/* iOS Safari Instructions Modal */}
-      {showIOSHelp && (
-        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/70 backdrop-blur-sm" onClick={() => setShowIOSHelp(false)}>
+      {/* Installation instructions for iOS, Android, and unsupported desktop browsers */}
+      {showInstallHelp && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/70 backdrop-blur-sm" onClick={() => setShowInstallHelp(false)}>
           <div className="bg-[#1c1c1e] rounded-t-3xl w-full max-w-md p-6 pb-10 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="w-10 h-1 bg-white/20 rounded-full mx-auto mb-6" />
-            <h2 className="text-white text-lg font-semibold mb-2 text-center">Open in Safari</h2>
-            <p className="text-gray-400 text-sm text-center mb-6">Facebook can't open Safari directly. Follow these steps:</p>
+            <button
+              onClick={() => setShowInstallHelp(false)}
+              aria-label="Close installation instructions"
+              className="absolute right-5 top-5 text-gray-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h2 className="text-white text-lg font-semibold mb-2 text-center">
+              {isIOS ? "Install USALB RADIO on iPhone" : "Install USALB RADIO"}
+            </h2>
+            <p className="text-gray-400 text-sm text-center mb-6">
+              {isIOS
+                ? "In Safari, follow these steps:"
+                : "Use your browser's install option to add the radio to your home screen:"}
+            </p>
             <ol className="space-y-4 mb-8">
               <li className="flex items-start gap-3">
                 <span className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold shrink-0">1</span>
-                <p className="text-white text-sm pt-0.5">Tap the <strong>⋯</strong> button in the top-right corner of the screen</p>
+                <p className="text-white text-sm pt-0.5">{isIOS ? <>Tap the <strong>Share</strong> button in Safari</> : <>Open your browser menu</>}</p>
               </li>
               <li className="flex items-start gap-3">
                 <span className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold shrink-0">2</span>
-                <p className="text-white text-sm pt-0.5">Tap <strong>"Open in Safari"</strong> from the menu</p>
+                <p className="text-white text-sm pt-0.5">{isIOS ? <>Scroll down</> : <>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong></>}</p>
               </li>
+              {isIOS && (
+                <>
+                  <li className="flex items-start gap-3">
+                    <span className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold shrink-0">3</span>
+                    <p className="text-white text-sm pt-0.5">Tap <strong>Add to Home Screen</strong></p>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <span className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold shrink-0">4</span>
+                    <p className="text-white text-sm pt-0.5">Tap <strong>Add</strong></p>
+                  </li>
+                </>
+              )}
             </ol>
-            <button onClick={() => setShowIOSHelp(false)} className="w-full py-3 rounded-2xl bg-white/10 text-white text-sm font-medium hover:bg-white/20 transition-colors">
+            <button onClick={() => setShowInstallHelp(false)} className="w-full py-3 rounded-2xl bg-white/10 text-white text-sm font-medium hover:bg-white/20 transition-colors">
               Got it
             </button>
           </div>
@@ -505,23 +565,36 @@ export default function Home() {
               )}
             </button>
 
-            {/* Offline / Retry Status */}
+            {/* Startup guidance and reconnect status */}
+            {autoplayBlocked && !isLoading && !isPlaying && (
+              <div className="mb-8 w-full rounded-2xl border border-red-500/30 bg-red-950/40 px-4 py-4 text-center">
+                <p className="text-sm font-semibold text-white">Ready to play</p>
+                <p className="mt-1 text-xs leading-relaxed text-red-100/70">
+                  Your browser blocked automatic playback. Tap the play button to start the live radio.
+                </p>
+              </div>
+            )}
             {streamOffline && !isLoading && (
               <div className="mb-8 flex flex-col items-center gap-2 text-center">
                 <div className="flex items-center gap-2 text-yellow-500">
-                  <WifiOff className="w-4 h-4" />
-                  <span className="text-sm font-medium">Stream temporarily offline</span>
+                  {hasPlayedOnceRef.current ? <WifiOff className="w-4 h-4" /> : <Radio className="w-4 h-4 animate-pulse" />}
+                  <span className="text-sm font-medium">
+                    {hasPlayedOnceRef.current ? "Stream temporarily offline" : "Connecting to live radio"}
+                  </span>
                 </div>
                 {retryCountdown > 0 ? (
                   <p className="text-xs text-gray-500">
-                    Retrying in <span className="text-gray-300 font-medium">{retryCountdown}s</span> — or tap above to retry now
+                    {hasPlayedOnceRef.current ? "Retrying" : "Trying again"} in{" "}
+                    <span className="text-gray-300 font-medium">{retryCountdown}s</span> — or tap above to retry now
                   </p>
                 ) : (
-                  <p className="text-xs text-gray-500">Tap the button above to retry</p>
+                  <p className="text-xs text-gray-500">
+                    {hasPlayedOnceRef.current ? "Tap the button above to retry" : "The radio will keep trying automatically"}
+                  </p>
                 )}
               </div>
             )}
-            {!streamOffline && <div className="mb-8" />}
+            {!streamOffline && !autoplayBlocked && <div className="mb-8" />}
 
             {/* Volume Control */}
             {isIOS ? (
