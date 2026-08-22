@@ -365,14 +365,15 @@ export default function Home() {
     // Try once immediately. If the browser blocks it, the play button is the
     // only thing that can start audio; do not keep triggering rejected plays.
     const startupTimer = window.setTimeout(tryAutoplay, 150);
+    const tryAutoplayWhenReady = () => tryAutoplay(false);
     const tryAutoplayFromPointer = () => tryAutoplay(true);
     const tryAutoplayFromTouch = () => tryAutoplay(true);
-    audio.addEventListener("canplay", tryAutoplay);
+    audio.addEventListener("canplay", tryAutoplayWhenReady);
     window.addEventListener("pointerdown", tryAutoplayFromPointer, { once: true });
     window.addEventListener("touchstart", tryAutoplayFromTouch, { once: true });
     return () => {
       window.clearTimeout(startupTimer);
-      audio.removeEventListener("canplay", tryAutoplay);
+      audio.removeEventListener("canplay", tryAutoplayWhenReady);
       window.removeEventListener("pointerdown", tryAutoplayFromPointer);
       window.removeEventListener("touchstart", tryAutoplayFromTouch);
     };
