@@ -43,7 +43,6 @@ export default function Home() {
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const primerIframeRef = useRef<HTMLIFrameElement | null>(null);
   const streamOfflineRef = useRef(false);
-  const initialAutoplayAttemptedRef = useRef(false);
   useEffect(() => { streamOfflineRef.current = streamOffline; }, [streamOffline]);
 
   // Use a ref for the stream URL so updating it NEVER causes a re-render
@@ -84,18 +83,6 @@ export default function Home() {
         // Only update the audio element src if the radio is not currently playing
         if (audioRef.current && !isPlayingRef.current) {
           audioRef.current.src = data.url;
-          // The first autoplay attempt can happen before the API responds.
-          // Try again as soon as the live stream URL is ready.
-          if (!initialAutoplayAttemptedRef.current) {
-            initialAutoplayAttemptedRef.current = true;
-            audioRef.current.load();
-            audioRef.current.play().then(() => {
-              setIsPlaying(true);
-              setIsLoading(false);
-            }).catch(() => {
-              // Android may require a user gesture before audible playback.
-            });
-          }
         }
       } catch {
         // Keep the fallback already set on the audio element
@@ -260,7 +247,7 @@ export default function Home() {
       setIsLoading(false);
       setIsPlaying(false);
       setStreamOffline(true);
-       startRetryCountdown(3, () => attemptPlay(true));
+       startRetryCountdown(isRetry ? 3 : 10, () => attemptPlay(true));
     }
   }, [clearRetryTimers, startRetryCountdown, primerAndPlay, removePrimerIframe]);
 
@@ -347,25 +334,22 @@ export default function Home() {
 
     const tryAutoplay = () => {
       if (!audio.paused) return;
-      audio.play().then(() => {
-        setIsPlaying(true);
-        setIsLoading(false);
-      }).catch(() => {});
+      attemptPlay(false);
     };
 
-    // Try immediately, then retry after the first touch/click. The second
-    // attempt satisfies browsers that block sound until user interaction.
-    tryAutoplay();
+    // Try immediately, then retry after the first touch/click. If the stream
+    // is not ready, attemptPlay shows the reconnect countdown and retries.
+    const startupTimer = window.setTimeout(tryAutoplay, 150);
     audio.addEventListener("canplay", tryAutoplay);
     window.addEventListener("pointerdown", tryAutoplay, { once: true });
     window.addEventListener("touchstart", tryAutoplay, { once: true });
     return () => {
+      window.clearTimeout(startupTimer);
       audio.removeEventListener("canplay", tryAutoplay);
       window.removeEventListener("pointerdown", tryAutoplay);
       window.removeEventListener("touchstart", tryAutoplay);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [attemptPlay]);
 
   // Listen for mid-stream errors and disconnects
   useEffect(() => {
