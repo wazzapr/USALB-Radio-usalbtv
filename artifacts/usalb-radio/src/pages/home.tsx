@@ -428,7 +428,7 @@ export default function Home() {
             data-testid="button-download-app"
             className="shrink-0 bg-white text-[#1877F2] text-sm font-bold px-4 py-1.5 rounded-full hover:bg-gray-100 transition-colors"
           >
-             <span className="inline-flex items-center gap-1.5"><Download className="w-4 h-4" />Install App</span>
+             <span className="inline-flex items-center gap-1.5"><Download className="w-4 h-4" />Download App</span>
           </button>
         </div>
       )}
