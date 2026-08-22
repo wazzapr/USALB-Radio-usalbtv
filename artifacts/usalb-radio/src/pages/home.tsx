@@ -417,18 +417,18 @@ export default function Home() {
 
   return (
     <div className="min-h-[100dvh] bg-black text-white flex flex-col items-center justify-center relative overflow-hidden font-sans">
-      {/* Install banner replaces the former browser-opening action. */}
+       {/* Install banner explains the platform-specific install flow. */}
       {!isInstalled && (
         <div className="fixed top-0 left-0 right-0 z-50 bg-[#1877F2] px-4 py-3 flex items-center justify-between gap-3 shadow-lg">
           <p className="text-white text-sm font-medium leading-tight">
-            Install USALB RADIO for quick access and background playback.
+             Add USALB RADIO for quick access and background playback.
           </p>
           <button
             onClick={handleInstall}
             data-testid="button-download-app"
             className="shrink-0 bg-white text-[#1877F2] text-sm font-bold px-4 py-1.5 rounded-full hover:bg-gray-100 transition-colors"
           >
-            <span className="inline-flex items-center gap-1.5"><Download className="w-4 h-4" />Download App</span>
+             <span className="inline-flex items-center gap-1.5"><Download className="w-4 h-4" />Install App</span>
           </button>
         </div>
       )}
@@ -446,31 +446,53 @@ export default function Home() {
               <X className="w-5 h-5" />
             </button>
             <h2 className="text-white text-lg font-semibold mb-2 text-center">
-              {isIOS ? "Install USALB RADIO on iPhone" : "Install USALB RADIO"}
+              {isIOS && isInFBBrowser
+                ? "Open USALB RADIO in Safari"
+                : isIOS
+                ? "Install USALB RADIO on iPhone"
+                : "Install USALB RADIO"}
             </h2>
             <p className="text-gray-400 text-sm text-center mb-6">
-              {isIOS
+              {isIOS && isInFBBrowser
+                ? "Messenger cannot install apps. Open this page in Safari first:"
+                : isIOS
                 ? "In Safari, follow these steps:"
                 : "Use your browser's install option to add the radio to your home screen:"}
             </p>
             <ol className="space-y-4 mb-8">
               <li className="flex items-start gap-3">
                 <span className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold shrink-0">1</span>
-                <p className="text-white text-sm pt-0.5">{isIOS ? <>Tap the <strong>Share</strong> button in Safari</> : <>Open your browser menu</>}</p>
+                <p className="text-white text-sm pt-0.5">
+                  {isIOS && isInFBBrowser
+                    ? <>Tap the <strong>…</strong> menu at the top</>
+                    : isIOS
+                    ? <>Tap the <strong>Share</strong> button in Safari</>
+                    : <>Open your browser menu</>}
+                </p>
               </li>
               <li className="flex items-start gap-3">
                 <span className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold shrink-0">2</span>
-                <p className="text-white text-sm pt-0.5">{isIOS ? <>Scroll down</> : <>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong></>}</p>
+                <p className="text-white text-sm pt-0.5">
+                  {isIOS && isInFBBrowser
+                    ? <>Tap <strong>Open in browser</strong> or <strong>Open in Safari</strong></>
+                    : isIOS
+                    ? <>Scroll down</>
+                    : <>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong></>}
+                </p>
               </li>
               {isIOS && (
                 <>
                   <li className="flex items-start gap-3">
                     <span className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold shrink-0">3</span>
-                    <p className="text-white text-sm pt-0.5">Tap <strong>Add to Home Screen</strong></p>
+                    <p className="text-white text-sm pt-0.5">
+                      {isInFBBrowser ? <>In Safari, tap the <strong>Share</strong> button</> : <>Tap <strong>Add to Home Screen</strong></>}
+                    </p>
                   </li>
                   <li className="flex items-start gap-3">
                     <span className="w-7 h-7 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold shrink-0">4</span>
-                    <p className="text-white text-sm pt-0.5">Tap <strong>Add</strong></p>
+                    <p className="text-white text-sm pt-0.5">
+                      {isInFBBrowser ? <>Tap <strong>Add to Home Screen</strong>, then <strong>Add</strong></> : <>Tap <strong>Add</strong></>}
+                    </p>
                   </li>
                 </>
               )}
