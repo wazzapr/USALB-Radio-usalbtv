@@ -53,6 +53,7 @@ export default function Home() {
   // Use a ref for the stream URL so updating it NEVER causes a re-render
   // or audio interruption. The audio element src is set imperatively.
   const streamUrlRef = useRef("");
+  const streamUrlRequestRef = useRef<Promise<string> | null>(null);
   const isPlayingRef = useRef(false);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
 
@@ -248,22 +249,92 @@ export default function Home() {
     await audio.play();
   }, [removePrimerIframe]);
 
+  const loadStreamUrl = useCallback(async (forceFresh = false) => {
+    if (!forceFresh && streamUrlRef.current) return streamUrlRef.current;
+    if (streamUrlRequestRef.current) return streamUrlRequestRef.current;
+
+    const request = fetch(`/api/stream-url${forceFresh ? "?fresh=1" : ""}`, {
+      cache: "no-store",
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Stream URL unavailable");
+        const data = await res.json() as { url?: string };
+        if (!data.url) throw new Error("Stream URL missing");
+        streamUrlRef.current = data.url;
+        return data.url;
+      })
+      .finally(() => {
+        streamUrlRequestRef.current = null;
+      });
+
+    streamUrlRequestRef.current = request;
+    return request;
+  }, []);
+
   const attemptPlay = useCallback(async (isRetry = false, fromUserGesture = false) => {
     const audio = audioRef.current;
     if (!audio || playAttemptRef.current) return;
     if (autoplayBlockedRef.current && !fromUserGesture) return;
     playAttemptRef.current = true;
     setIsLoading(true);
-    // Always fetch the current station URL before trying audio. The provider
-    // can rotate the stream id, and the old URL may fail on first page load.
     try {
-      const res = await fetch("/api/stream-url?fresh=1", { cache: "no-store" });
-      if (!res.ok) throw new Error("Stream URL unavailable");
-      const data = await res.json();
-      if (!data.url) throw new Error("Stream URL missing");
-      streamUrlRef.current = data.url;
-      if (!streamUrlRef.current) throw new Error("Stream URL missing");
+      // If this came from a tap, start the audio element before awaiting any
+      // network work. Mobile Safari and some Android webviews otherwise lose
+      // the user-gesture permission required by audio.play().
+      if (fromUserGesture && streamUrlRef.current) {
+        audio.src = streamUrlRef.current;
+        audio.load();
+        await audio.play();
+      } else {
+        const streamUrl = await loadStreamUrl(isRetry);
+        if (isRetry) {
+          await primerAndPlay(audio, streamUrl);
+        } else {
+          audio.src = streamUrl;
+          audio.load();
+          await audio.play();
+        }
+      }
+      setIsPlaying(true);
+      hasPlayedOnceRef.current = true;
+      autoplayBlockedRef.current = false;
+      setStreamOffline(false);
+      setAutoplayBlocked(false);
+      clearRetryTimers();
+    } catch (error) {
+      // A stale provider URL should be discarded so the next tap/retry gets a
+      // fresh stream address rather than replaying the same failed URL.
+      if (!isAutoplayBlockedError(error)) {
+        streamUrlRef.current = "";
+      }
+      removePrimerIframe();
+      setIsPlaying(false);
+      // Browser autoplay restrictions are not a station outage. Explain the
+      // required user action instead of showing a misleading reconnect loop.
+      if (isAutoplayBlockedError(error)) {
+        autoplayBlockedRef.current = true;
+        setAutoplayBlocked(true);
+        setStreamOffline(false);
+        clearRetryTimers();
+      } else {
+        setStreamOffline(true);
+        // Three seconds keeps the first connection feeling direct while still
+        // allowing the station provider time to become ready.
+        startRetryCountdown(3, () => attemptPlay(true));
+      }
+    } finally {
+      playAttemptRef.current = false;
+      setIsLoading(false);
+    }
+  }, [clearRetryTimers, startRetryCountdown, primerAndPlay, removePrimerIframe, loadStreamUrl]);
 
+  // Resolve the rotating station URL ahead of time so a later user tap can
+  // start playback synchronously without waiting for fetch().
+  useEffect(() => {
+    void loadStreamUrl().catch(() => undefined);
+  }, [loadStreamUrl]);
+
+  /*
       if (isRetry) {
         await primerAndPlay(audio, streamUrlRef.current);
       } else {
@@ -298,6 +369,7 @@ export default function Home() {
       setIsLoading(false);
     }
   }, [clearRetryTimers, startRetryCountdown, primerAndPlay, removePrimerIframe]);
+  */
 
   // Media Session keeps Android Chrome's lock-screen notification and headset
   // controls connected to the live player while the page is in the background.
