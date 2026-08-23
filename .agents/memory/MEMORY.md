@@ -1,1 +1,2 @@
 - [Published URL handling](published-url-handling.md) — derive user-shared links from the current page and verify production domains instead of assuming a prior generated hostname.
+- [Mobile audio gestures](mobile-audio-gestures.md) — preload stream URLs and call audio.play immediately from the user tap; avoid background autoplay races.
