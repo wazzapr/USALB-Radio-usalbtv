@@ -286,6 +286,17 @@ export default function Home() {
     audio: HTMLAudioElement,
     forceFresh = false,
   ) => {
+    // The official player uses the provider URL directly. Prefer it whenever
+    // the background URL lookup has completed; this also avoids a proxy
+    // response being mistaken for audio by mobile browsers.
+    if (!forceFresh && streamUrlRef.current) {
+      const directUrl = streamUrlRef.current + (streamUrlRef.current.includes("?") ? "&" : "?") + "_t=" + Date.now();
+      audio.src = directUrl;
+      audio.load();
+      await audio.play();
+      return;
+    }
+
     const separator = forceFresh ? "?" : "?";
     audio.src = `${STREAM_ENDPOINT}${separator}_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
     audio.load();
