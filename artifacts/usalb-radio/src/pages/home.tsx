@@ -12,6 +12,7 @@ const isInAppBrowser = /FBAN|FBAV|FBIOS|FB_IAB|Instagram|Messenger|TikTok|musica
 const isStandaloneDisplay = window.matchMedia("(display-mode: standalone)").matches
   || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
 const STREAM_ENDPOINT = "/api/stream";
+const OFFICIAL_RADIO_PAGE = "https://usalbradio.radiostream321.com/";
 
 const isAutoplayBlockedError = (error: unknown) => {
   if (!error || typeof error !== "object") return false;
@@ -45,6 +46,7 @@ export default function Home() {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const primerIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const warmupIframeRef = useRef<HTMLIFrameElement | null>(null);
   const playAttemptRef = useRef(false);
   const streamOfflineRef = useRef(false);
   const hasPlayedOnceRef = useRef(false);
@@ -73,6 +75,36 @@ export default function Home() {
     return () => {
       window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
       window.removeEventListener("appinstalled", handleInstalled);
+    };
+  }, []);
+
+  // Listen2MyRadio initializes the station when its official player page is
+  // opened. Warm it up invisibly on app launch so the first Play tap does not
+  // depend on the user visiting that page beforehand.
+  useEffect(() => {
+    const iframe = document.createElement("iframe");
+    iframe.src = OFFICIAL_RADIO_PAGE;
+    iframe.title = "Radio connection warm-up";
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.setAttribute("allow", "autoplay");
+    iframe.style.position = "fixed";
+    iframe.style.width = "1px";
+    iframe.style.height = "1px";
+    iframe.style.opacity = "0";
+    iframe.style.pointerEvents = "none";
+    iframe.style.border = "0";
+    warmupIframeRef.current = iframe;
+    document.body.appendChild(iframe);
+
+    const cleanupTimer = window.setTimeout(() => {
+      iframe.remove();
+      if (warmupIframeRef.current === iframe) warmupIframeRef.current = null;
+    }, 1500);
+
+    return () => {
+      window.clearTimeout(cleanupTimer);
+      iframe.remove();
+      if (warmupIframeRef.current === iframe) warmupIframeRef.current = null;
     };
   }, []);
 
