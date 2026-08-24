@@ -49,4 +49,21 @@ streamRouter.get("/stream-url", async (req, res) => {
   }
 });
 
+// Keep the browser's first play() call tied to the user's click. The client
+// can start loading this same-origin endpoint immediately while the server
+// resolves the provider's rotating stream address.
+streamRouter.get("/stream", async (req, res) => {
+  if (req.query.fresh === "1") {
+    cachedUrl = null;
+    cacheExpiry = 0;
+  }
+
+  try {
+    const url = await fetchStreamUrl();
+    res.redirect(302, url);
+  } catch {
+    res.redirect(302, FALLBACK_URL);
+  }
+});
+
 export default streamRouter;

@@ -11,6 +11,7 @@ const isAndroid = /Android/.test(ua);
 const isInAppBrowser = /FBAN|FBAV|FBIOS|FB_IAB|Instagram|Messenger|TikTok|musical_ly|Line\//i.test(ua);
 const isStandaloneDisplay = window.matchMedia("(display-mode: standalone)").matches
   || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
+const STREAM_ENDPOINT = "/api/stream";
 
 const isAutoplayBlockedError = (error: unknown) => {
   if (!error || typeof error !== "object") return false;
@@ -249,6 +250,18 @@ export default function Home() {
     await audio.play();
   }, [removePrimerIframe]);
 
+  const playThroughStreamEndpoint = useCallback(async (
+    audio: HTMLAudioElement,
+    forceFresh = false,
+  ) => {
+    const separator = forceFresh ? "?" : "?";
+    audio.src = `${STREAM_ENDPOINT}${separator}_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
+    audio.load();
+    // Keep play() in the same call stack as the user's tap. The endpoint
+    // resolves the rotating provider URL server-side after playback begins.
+    await audio.play();
+  }, []);
+
   const loadStreamUrl = useCallback(async (forceFresh = false) => {
     if (!forceFresh && streamUrlRef.current) return streamUrlRef.current;
     if (streamUrlRequestRef.current) return streamUrlRequestRef.current;
@@ -281,10 +294,8 @@ export default function Home() {
       // If this came from a tap, start the audio element before awaiting any
       // network work. Mobile Safari and some Android webviews otherwise lose
       // the user-gesture permission required by audio.play().
-      if (fromUserGesture && streamUrlRef.current) {
-        audio.src = streamUrlRef.current;
-        audio.load();
-        await audio.play();
+      if (fromUserGesture) {
+        await playThroughStreamEndpoint(audio, isRetry);
       } else {
         const streamUrl = await loadStreamUrl(isRetry);
         if (isRetry) {
@@ -326,7 +337,7 @@ export default function Home() {
       playAttemptRef.current = false;
       setIsLoading(false);
     }
-  }, [clearRetryTimers, startRetryCountdown, primerAndPlay, removePrimerIframe, loadStreamUrl]);
+  }, [clearRetryTimers, startRetryCountdown, primerAndPlay, removePrimerIframe, loadStreamUrl, playThroughStreamEndpoint]);
 
   // Resolve the rotating station URL ahead of time so a later user tap can
   // start playback synchronously without waiting for fetch().
