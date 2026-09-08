@@ -13,6 +13,7 @@ const isStandaloneDisplay = window.matchMedia("(display-mode: standalone)").matc
   || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
 const STREAM_ENDPOINT = "/api/stream";
 const OFFICIAL_RADIO_PAGE = "https://usalbradio.radiostream321.com/";
+const PUBLIC_APP_URL = "https://usalb-radio-usalbtv--applauncher2.replit.app/";
 
 const isAutoplayBlockedError = (error: unknown) => {
   if (!error || typeof error !== "object") return false;
@@ -108,15 +109,9 @@ export default function Home() {
     };
   }, []);
 
-  // Share the canonical page URL without transient query/hash state. This
-  // keeps copied links valid on both the preview and the published site and
-  // avoids sending stream/cache parameters to social platforms.
-  const shareUrl = (() => {
-    const url = new URL(window.location.href);
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  })();
+  // Always share the public production URL. A temporary .replit.dev preview
+  // URL makes Messenger open Replit's placeholder instead of this app.
+  const shareUrl = PUBLIC_APP_URL;
   const shareText = "Listen to USALB RADIO — live Albanian broadcast!";
 
   const handleInstall = async () => {

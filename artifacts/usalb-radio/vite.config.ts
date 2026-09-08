@@ -26,9 +26,7 @@ if (!basePath) {
   );
 }
 
-const replitDomains = process.env.REPLIT_DOMAINS ?? "";
-const primaryDomain = replitDomains.split(",")[0]?.trim() ?? "";
-const appBaseUrl = primaryDomain ? `https://${primaryDomain}` : "";
+const publicAppUrl = "https://usalb-radio-usalbtv--applauncher2.replit.app";
 
 export default defineConfig({
   base: basePath,
@@ -36,7 +34,9 @@ export default defineConfig({
     {
       name: "inject-og-absolute-url",
       transformIndexHtml(html: string) {
-        return html.replace(/__APP_BASE_URL__/g, appBaseUrl);
+        // Never publish temporary .replit.dev URLs in social metadata. Social
+        // crawlers can follow them to Replit's placeholder page.
+        return html.replace(/__APP_BASE_URL__/g, publicAppUrl);
       },
     },
     react(),
