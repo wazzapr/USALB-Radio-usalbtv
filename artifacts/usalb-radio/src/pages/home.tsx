@@ -281,19 +281,11 @@ export default function Home() {
     audio: HTMLAudioElement,
     forceFresh = false,
   ) => {
-    // The official player uses the provider URL directly. Prefer it whenever
-    // the background URL lookup has completed; this also avoids a proxy
-    // response being mistaken for audio by mobile browsers.
-    if (!forceFresh && streamUrlRef.current) {
-      const directUrl = streamUrlRef.current + (streamUrlRef.current.includes("?") ? "&" : "?") + "_t=" + Date.now();
-      audio.src = directUrl;
-      audio.load();
-      await audio.play();
-      return;
-    }
-
-    const separator = forceFresh ? "?" : "?";
-    audio.src = `${STREAM_ENDPOINT}${separator}_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
+    // Always use the same-origin proxy for playback. Sending Messenger's
+    // embedded browser directly to the third-party provider can be rejected
+    // even when the same audio works in Safari. The proxy also supplies the
+    // provider's rotating URL and session headers server-side.
+    audio.src = `${STREAM_ENDPOINT}?_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
     audio.load();
     // Keep play() in the same call stack as the user's tap. The endpoint
     // resolves the rotating provider URL server-side after playback begins.
@@ -676,7 +668,13 @@ export default function Home() {
 
             {/* Play Button */}
             <button
-              onClick={togglePlay}
+               // pointerdown runs at the start of the phone's touch gesture.
+               // This is more reliable than waiting for click in Messenger's
+               // iOS webview, where the activation window is very short.
+               onPointerDown={togglePlay}
+               onKeyDown={(event) => {
+                 if (event.key === "Enter" || event.key === " ") togglePlay();
+               }}
               className={cn(
                 "w-28 h-28 rounded-full flex items-center justify-center transition-all duration-500 relative group/btn mb-4",
                 isPlaying 
@@ -707,8 +705,19 @@ export default function Home() {
               <div className="mb-8 w-full rounded-2xl border border-red-500/30 bg-red-950/40 px-4 py-4 text-center">
                 <p className="text-sm font-semibold text-white">Ready to play</p>
                 <p className="mt-1 text-xs leading-relaxed text-red-100/70">
-                  Your browser blocked automatic playback. Tap the play button to start the live radio.
+                   {isInAppBrowser
+                     ? "Messenger blocked audio in its built-in browser. Open this page in Safari, then press Play."
+                     : "Your browser blocked automatic playback. Tap the play button to start the live radio."}
                 </p>
+                 {isInAppBrowser && (
+                   <button
+                     type="button"
+                     onClick={openExternalBrowser}
+                     className="mt-3 rounded-full bg-white px-4 py-2 text-xs font-bold text-red-900 transition-colors hover:bg-red-50"
+                   >
+                     Open in Safari
+                   </button>
+                 )}
               </div>
             )}
             {streamOffline && !isLoading && (
