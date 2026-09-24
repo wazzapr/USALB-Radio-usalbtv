@@ -284,7 +284,10 @@ export default function Home() {
     audio.volume = Math.max(volume, 0.8);
     if (volume < 0.8) setVolume(Math.max(volume, 0.8));
     audio.src = `${STREAM_ENDPOINT}?_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
-    audio.load();
+    // Do not call load() here. On some mobile browsers, load() immediately
+    // before play() can break the user-activation chain from the tap.
+    // Setting src and calling play() directly preserves the activation while
+    // the browser fetches the live stream in the background.
     await audio.play();
   }, [volume]);
   const attemptPlay = useCallback(async (isRetry = false, fromUserGesture = false) => {
