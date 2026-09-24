@@ -48,6 +48,20 @@ function extractStreamUrl(html: string): string | null {
   return null;
 }
 
+async function fetchWithHeaderTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    // fetch() resolves when response headers arrive. The live audio body must
+    // NOT inherit the connection timeout or it would be killed while playing.
+    return response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchStreamUrl(forceFresh = false): Promise<string> {
   if (!forceFresh && cachedUrl && Date.now() < cacheExpiry) {
     return cachedUrl;
@@ -55,7 +69,7 @@ async function fetchStreamUrl(forceFresh = false): Promise<string> {
 
   if (forceFresh) clearProviderCache();
 
-  const res = await fetch(RADIO_PAGE, {
+  const res = await fetchWithHeaderTimeout(RADIO_PAGE, {
     headers: {
       Accept: "text/html,application/xhtml+xml",
       "User-Agent": "Mozilla/5.0 (compatible; USALBRadioPlayer/1.0)",
@@ -63,8 +77,7 @@ async function fetchStreamUrl(forceFresh = false): Promise<string> {
     },
     cache: "no-store",
     redirect: "follow",
-    signal: AbortSignal.timeout(8000),
-  });
+  }, 8000);
 
   if (!res.ok) throw new Error(`Radio page returned ${res.status}`);
 
@@ -108,12 +121,11 @@ async function fetchReadyProviderStream(): Promise<Response> {
       // Always rediscover after the first failed attempt. Listen2MyRadio can
       // change the mount while the station is waking up.
       const url = await fetchStreamUrl(attempt > 0);
-      const upstream = await fetch(url, {
+      const upstream = await fetchWithHeaderTimeout(url, {
         headers: providerHeaders(),
         redirect: "follow",
         cache: "no-store",
-        signal: AbortSignal.timeout(8000),
-      });
+      }, 8000);
 
       if (isAudioResponse(upstream)) {
         // Keep the working URL for subsequent listeners, but never trust it
@@ -159,19 +171,20 @@ streamRouter.get("/stream", async (req, res) => {
     res.status(upstream.status);
     res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "audio/mpeg");
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-    const contentLength = upstream.headers.get("content-length");
-    if (contentLength) res.setHeader("Content-Length", contentLength);
+    // Do not forward Content-Length for a live stream. Let Node use chunked
+    // streaming so a provider cannot make the browser think the live stream
+    // has a finite end.
+    res.flushHeaders();
     Readable.fromWeb(upstream.body as import("node:stream/web").ReadableStream).pipe(res);
   } catch {
     // Last-resort compatibility path. The normal path always tries the
     // current URL discovered from RadioStream321 first.
     try {
-      const fallback = await fetch(FALLBACK_URL, {
+      const fallback = await fetchWithHeaderTimeout(FALLBACK_URL, {
         headers: providerHeaders(),
         redirect: "follow",
         cache: "no-store",
-        signal: AbortSignal.timeout(12000),
-      });
+      }, 12000);
       if (!isAudioResponse(fallback)) {
         await fallback.body?.cancel();
         throw new Error("Fallback provider did not return audio");
@@ -179,6 +192,7 @@ streamRouter.get("/stream", async (req, res) => {
       res.status(fallback.status);
       res.setHeader("Content-Type", fallback.headers.get("content-type") ?? "audio/mpeg");
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      res.flushHeaders();
       Readable.fromWeb(fallback.body as import("node:stream/web").ReadableStream).pipe(res);
     } catch {
       if (!res.headersSent) res.status(502).end("Radio stream unavailable");
