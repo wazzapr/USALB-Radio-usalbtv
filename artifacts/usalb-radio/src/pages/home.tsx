@@ -271,22 +271,35 @@ export default function Home() {
     }
   }, []);
 
+  const loadLiveStreamUrl = useCallback(async (forceFresh = false) => {
+    const response = await fetch(forceFresh ? "/api/stream-url?fresh=1" : "/api/stream-url", { cache: "no-store" });
+    if (!response.ok) throw new Error("Live stream URL unavailable");
+    const data = await response.json() as { url?: string };
+    if (!data.url) throw new Error("Live stream URL missing");
+    return data.url;
+  }, []);
+
   const playThroughStreamEndpoint = useCallback(async (
     audio: HTMLAudioElement,
     forceFresh = false,
   ) => {
-    // The server uses the same RadioStream321 discovery logic as the old
-    // working project. Playback stays same-origin so mobile webviews do not
-    // have to fetch the provider directly.
+    // Normal browsers use the exact live MP3 URL discovered by the old
+    // working project. In-app browsers use the same-origin relay so Messenger
+    // and similar webviews never contact RadioStream321 directly.
     audio.pause();
     audio.muted = false;
     audio.volume = Math.max(volume, 0.8);
     if (volume < 0.8) setVolume(Math.max(volume, 0.8));
 
-    const cacheBust = forceFresh ? "&fresh=1" : "";
-    audio.src = `${STREAM_ENDPOINT}?_t=${Date.now()}${cacheBust}`;
+    if (!isInAppBrowser) {
+      const liveUrl = await loadLiveStreamUrl(forceFresh);
+      audio.src = liveUrl;
+    } else {
+      audio.src = `${STREAM_ENDPOINT}?_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
+    }
     await audio.play();
-  }, [volume]);
+  }, [volume, loadLiveStreamUrl]);
+
   const attemptPlay = useCallback(async (isRetry = false, fromUserGesture = false) => {
     const audio = audioRef.current;
     if (!audio || playAttemptRef.current) return;
