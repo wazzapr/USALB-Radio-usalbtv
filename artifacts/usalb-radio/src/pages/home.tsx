@@ -275,21 +275,22 @@ export default function Home() {
     audio: HTMLAudioElement,
     forceFresh = false,
   ) => {
-    // Always use the same-origin proxy for playback. Sending Messenger's
-    // embedded browser directly to the third-party provider can be rejected
-    // even when the same audio works in Safari. The proxy also supplies the
-    // provider's rotating URL and session headers server-side.
+    // The server warms the current RadioStream321 mount before the user taps
+    // Play. Use that URL directly so audio.play() stays attached to the real
+    // user gesture with no fetch/await in between.
+    if (!forceFresh && streamUrlRef.current) {
+      const separator = streamUrlRef.current.includes("?") ? "&" : "?";
+      audio.src = `${streamUrlRef.current}${separator}_t=${Date.now()}`;
+      audio.load();
+      await audio.play();
+      return;
+    }
+
+    // Reconnects use the same-origin proxy, which forces a fresh provider
+    // discovery on the server when the rotating mount has changed.
     audio.src = `${STREAM_ENDPOINT}?_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
     audio.load();
-
-    // Start muted first so browsers with strict autoplay policy do not reject
-    // the media element before the live stream has produced its first bytes.
-    // The user's Play tap immediately restores audible playback.
-    const wasMuted = audio.muted;
-    audio.muted = true;
-    const playPromise = audio.play();
-    await playPromise;
-    audio.muted = wasMuted;
+    await audio.play();
   }, []);
 
   const loadStreamUrl = useCallback(async (forceFresh = false) => {
