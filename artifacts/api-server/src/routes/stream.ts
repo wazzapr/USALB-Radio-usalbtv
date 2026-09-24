@@ -5,8 +5,8 @@ const streamRouter = Router();
 
 const RADIO_PAGE = "https://usalbradio.radiostream321.com/";
 const FALLBACK_URL = "https://uk4freenew.listen2myradio.com/live.mp3?typeportmount=s1_9311_stream_687568716";
-const PROVIDER_RETRIES = 8;
-const PROVIDER_RETRY_DELAY_MS = 500;
+const PROVIDER_RETRIES = 4;
+const PROVIDER_RETRY_DELAY_MS = 750;
 const CACHE_TTL_MS = 60 * 1000;
 
 let cachedUrl: string | null = null;
@@ -89,7 +89,7 @@ async function fetchStreamUrl(forceFresh = false): Promise<string> {
     },
     cache: "no-store",
     redirect: "follow",
-  }, 8000);
+  }, 6000);
 
   if (!res.ok) throw new Error(`Radio page returned ${res.status}`);
 
@@ -127,7 +127,8 @@ const isAudioResponse = (response: Response) => {
     || contentType.includes("mp3")
     || contentType.includes("octet-stream")
     || contentType.includes("ogg")
-    || contentType.includes("aac");
+    || contentType.includes("aac")
+    || contentType.startsWith("text/plain");
 
   return response.ok && Boolean(response.body) && !looksLikeHtml && looksLikeAudio;
 };
@@ -210,8 +211,16 @@ streamRouter.get("/stream", async (req, res) => {
   try {
     const upstream = await fetchReadyProviderStream();
     res.status(upstream.status);
-    res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "audio/mpeg");
+    const upstreamContentType = upstream.headers.get("content-type")?.toLowerCase() ?? "";
+    res.setHeader(
+      "Content-Type",
+      upstreamContentType.startsWith("text/plain") || !upstreamContentType
+        ? "audio/mpeg"
+        : upstreamContentType,
+    );
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.setHeader("Accept-Ranges", "none");
+    res.setHeader("X-Accel-Buffering", "no");
     // Do not forward Content-Length for a live stream. Let Node use chunked
     // streaming so a provider cannot make the browser think the live stream
     // has a finite end.
@@ -231,8 +240,16 @@ streamRouter.get("/stream", async (req, res) => {
         throw new Error("Fallback provider did not return audio");
       }
       res.status(fallback.status);
-      res.setHeader("Content-Type", fallback.headers.get("content-type") ?? "audio/mpeg");
+      const fallbackContentType = fallback.headers.get("content-type")?.toLowerCase() ?? "";
+      res.setHeader(
+        "Content-Type",
+        fallbackContentType.startsWith("text/plain") || !fallbackContentType
+          ? "audio/mpeg"
+          : fallbackContentType,
+      );
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      res.setHeader("Accept-Ranges", "none");
+      res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders();
       Readable.fromWeb(fallback.body as import("node:stream/web").ReadableStream).pipe(res);
     } catch {
