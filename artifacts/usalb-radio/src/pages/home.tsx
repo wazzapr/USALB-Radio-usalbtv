@@ -652,6 +652,16 @@ export default function Home() {
       <div className="relative z-10 w-full max-w-md mx-auto p-8">
         {/* Player Card */}
         <div className="bg-[#111] border border-red-900/30 rounded-3xl p-8 shadow-[0_0_50px_-12px_rgba(255,0,0,0.2)] backdrop-blur-xl relative overflow-hidden group">
+          {/* Exact USALB logo used as a subtle player background */}
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
+            <img
+              src={logoSrc}
+              alt=""
+              aria-hidden="true"
+              className="h-[78%] w-[78%] object-contain opacity-[0.10] mix-blend-screen"
+            />
+          </div>
+
           {/* Subtle animated glow inside card */}
           <div className={cn(
             "absolute -inset-20 bg-gradient-to-tr from-red-600/10 to-transparent blur-2xl opacity-0 transition-opacity duration-1000",
