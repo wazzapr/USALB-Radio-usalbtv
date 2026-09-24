@@ -670,14 +670,20 @@ export default function Home() {
               </span>
             </div>
 
-            {/* Logo / Branding */}
-            <div className="mb-12 text-center">
-              <img
-                src={logoSrc}
-                alt="USALB RADIO"
-                className="w-full max-w-xs mx-auto rounded-xl"
-                data-testid="img-logo"
-              />
+            {/* Station logo — the circular USALB Radio mark from the station branding */}
+            <div className="mb-12 flex justify-center">
+              <div
+                className="relative flex h-44 w-44 items-center justify-center overflow-hidden rounded-full border border-red-500/40 bg-black/80 p-2 shadow-[0_0_45px_-10px_rgba(220,38,38,0.45)] sm:h-52 sm:w-52"
+                data-testid="station-logo-frame"
+              >
+                <div className="absolute inset-0 rounded-full border border-white/10" />
+                <img
+                  src={logoSrc}
+                  alt="USALB RADIO"
+                  className="relative h-full w-full rounded-full object-contain"
+                  data-testid="img-logo"
+                />
+              </div>
             </div>
 
             {/* Visualizer (Fake) */}
