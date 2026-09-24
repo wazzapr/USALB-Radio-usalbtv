@@ -121,7 +121,8 @@ const isAudioResponse = (response: Response) => {
   // allow the provider's binary live-audio responses.
   const looksLikeHtml = contentType.includes("text/html") || contentType.includes("application/json");
   const looksLikeAudio =
-    contentType.startsWith("audio/")
+    contentType === ""
+    || contentType.startsWith("audio/")
     || contentType.includes("mpeg")
     || contentType.includes("mp3")
     || contentType.includes("octet-stream")
@@ -135,35 +136,10 @@ async function fetchReadyProviderStream(): Promise<Response> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < PROVIDER_RETRIES; attempt += 1) {
-    try {
-      // Always rediscover after the first failed attempt. Listen2MyRadio can
-      // change the mount while the station is waking up.
-      const url = await fetchStreamUrl(attempt > 0);
-      const upstream = await fetchWithHeaderTimeout(url, {
-        headers: providerHeaders(),
-        redirect: "follow",
-        cache: "no-store",
-      }, 8000);
-
-      if (isAudioResponse(upstream)) {
-        // Keep the working URL for subsequent listeners, but never trust it
-        // forever; the short TTL and retry path handle provider rotation.
-        cachedUrl = url;
-        cacheExpiry = Date.now() + CACHE_TTL_MS;
-        return upstream;
-      }
-
-      await upstream.body?.cancel();
-      clearProviderCache();
-      lastError = new Error("Radio provider is still waking up");
-    } catch (error) {
-      clearProviderCache();
-      lastError = error;
-    }
-
-    // Try the last known working mount immediately after the first
-    // discovery failure. This prevents a cold/stalled RadioStream321 page
-    // from making the listener wait through the entire retry cycle.
+    // The last known USALB mount is the fastest path to live audio.
+    // Try it first so a slow/unavailable RadioStream321 page cannot block
+    // the listener from connecting. Dynamic discovery remains the recovery
+    // path when the mount has rotated.
     if (attempt === 0) {
       try {
         const fallback = await fetchWithHeaderTimeout(FALLBACK_URL, {
@@ -182,6 +158,30 @@ async function fetchReadyProviderStream(): Promise<Response> {
       } catch (fallbackError) {
         lastError = fallbackError;
       }
+    }
+
+    try {
+      // Rediscover after a failed known mount. Listen2MyRadio can rotate the
+      // mount while the station is waking up.
+      const url = await fetchStreamUrl(true);
+      const upstream = await fetchWithHeaderTimeout(url, {
+        headers: providerHeaders(),
+        redirect: "follow",
+        cache: "no-store",
+      }, 8000);
+
+      if (isAudioResponse(upstream)) {
+        cachedUrl = url;
+        cacheExpiry = Date.now() + CACHE_TTL_MS;
+        return upstream;
+      }
+
+      await upstream.body?.cancel();
+      clearProviderCache();
+      lastError = new Error("Radio provider returned a non-audio response");
+    } catch (error) {
+      clearProviderCache();
+      lastError = error;
     }
 
     await new Promise((resolve) => setTimeout(resolve, PROVIDER_RETRY_DELAY_MS));
