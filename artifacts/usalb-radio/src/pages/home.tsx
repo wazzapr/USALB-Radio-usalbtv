@@ -79,6 +79,38 @@ export default function Home() {
     };
   }, []);
 
+  // Wake the API and resolve the current provider mount as soon as the
+  // listener opens USALB. This is important after a Replit cold start: the
+  // first visitor should trigger the server-side resolver automatically
+  // instead of having to open RadioStream321 manually.
+  useEffect(() => {
+    let cancelled = false;
+
+    const warmServer = async () => {
+      try {
+        const response = await fetch("/api/stream-url?fresh=1", {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok || cancelled) return;
+        const data = await response.json() as { url?: string };
+        if (data.url && !cancelled) {
+          streamUrlRef.current = data.url;
+        }
+      } catch {
+        // Playback will retry through /api/stream when the user presses Play.
+      }
+    };
+
+    void warmServer();
+    const retry = window.setTimeout(() => void warmServer(), 4000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(retry);
+    };
+  }, []);
+
   // Listen2MyRadio initializes the station when its official player page is
   // opened. Warm it up invisibly on app launch so the first Play tap does not
   // depend on the user visiting that page beforehand.
