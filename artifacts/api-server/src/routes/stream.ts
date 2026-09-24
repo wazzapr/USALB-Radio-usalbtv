@@ -4,10 +4,10 @@ import { Readable } from "node:stream";
 const streamRouter = Router();
 
 const RADIO_PAGE = "https://usalbradio.radiostream321.com/";
-const FALLBACK_URL = "https://uk4freenew.listen2myradio.com/live.mp3?typeportmount=s1_9311_stream_687568716";
+const FALLBACK_URL = "";
 const PROVIDER_RETRIES = 4;
 const PROVIDER_RETRY_DELAY_MS = 750;
-const CACHE_TTL_MS = 60 * 1000;
+const CACHE_TTL_MS = 4 * 60 * 1000;
 
 let cachedUrl: string | null = null;
 let cachedSessionCookie: string | null = null;
@@ -32,28 +32,39 @@ function decodePageText(value: string) {
 function extractStreamUrl(html: string): string | null {
   const page = decodePageText(html);
 
-  // RadioStream321 can expose the current Listen2MyRadio mount either as a
-  // normal URL or inside escaped JavaScript/JSON. Find both forms.
-  const candidates = [
-    ...page.matchAll(/https?:\/\/[^\s"'<>]+?\.mp3(?:\?[^\s"'<>]*)?/gi),
-    ...page.matchAll(/https?:\/\/[^\s"'<>]*listen2myradio[^\s"'<>]*/gi),
-  ];
+  // RadioStream321 renders the current Listen2MyRadio mount inside the
+  // station page. Do not depend on one exact URL shape: the mount can rotate
+  // and the provider may expose it in href/src attributes or JavaScript.
+  const candidates = new Set<string>();
+  const addCandidates = (pattern: RegExp) => {
+    for (const match of page.matchAll(pattern)) {
+      const raw = match[1] ?? match[0];
+      if (raw) candidates.add(raw.replace(/\\\//g, "/"));
+    }
+  };
 
-  for (const match of candidates) {
-    const value = match[0]
-      .replace(/\\\//g, "/")
-      .replace(/[),;'"]+$/, "");
+  addCandidates(/https?:\\/\\/[^\\s"'<>]+/gi);
+  addCandidates(/(?:src|href)\\s*=\\s*["']([^"']+)["']/gi);
+
+  const providerPattern =
+    /(?:listen2myradio|listen2myshow|radio12345|radiostream123)\\.com/i;
+
+  for (const raw of candidates) {
+    const value = raw
+      .replace(/&amp;/gi, "&")
+      .replace(/[),;'"\\]+$/, "");
 
     try {
-      const url = new URL(value);
+      const url = new URL(value, RADIO_PAGE);
       if (
         (url.protocol === "http:" || url.protocol === "https:")
-        && /(?:\.mp3|listen2myradio)/i.test(url.toString())
+        && providerPattern.test(url.hostname)
+        && !/radiostream321\\.com$/i.test(url.hostname)
       ) {
         return url.toString();
       }
     } catch {
-      // Ignore malformed page fragments and keep looking.
+      // Ignore unrelated/malformed page URLs.
     }
   }
 
@@ -199,9 +210,9 @@ streamRouter.get("/stream-url", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.json({ url, source: "live" });
   } catch {
-    // Keep the old known mount only as a last-resort compatibility fallback.
+    res.status(503);
     res.setHeader("Cache-Control", "no-store");
-    res.json({ url: FALLBACK_URL, source: "fallback" });
+    res.json({ error: "Live stream URL unavailable", source: "radiostream321" });
   }
 });
 
@@ -227,34 +238,8 @@ streamRouter.get("/stream", async (req, res) => {
     res.flushHeaders();
     Readable.fromWeb(upstream.body as import("node:stream/web").ReadableStream).pipe(res);
   } catch {
-    // Last-resort compatibility path. The normal path always tries the
-    // current URL discovered from RadioStream321 first.
-    try {
-      const fallback = await fetchWithHeaderTimeout(FALLBACK_URL, {
-        headers: providerHeaders(),
-        redirect: "follow",
-        cache: "no-store",
-      }, 12000);
-      if (!isAudioResponse(fallback)) {
-        await fallback.body?.cancel();
-        throw new Error("Fallback provider did not return audio");
-      }
-      res.status(fallback.status);
-      const fallbackContentType = fallback.headers.get("content-type")?.toLowerCase() ?? "";
-      res.setHeader(
-        "Content-Type",
-        fallbackContentType.startsWith("text/plain") || !fallbackContentType
-          ? "audio/mpeg"
-          : fallbackContentType,
-      );
-      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-      res.setHeader("Accept-Ranges", "none");
-      res.setHeader("X-Accel-Buffering", "no");
-      res.flushHeaders();
-      Readable.fromWeb(fallback.body as import("node:stream/web").ReadableStream).pipe(res);
-    } catch {
-      if (!res.headersSent) res.status(502).end("Radio stream unavailable");
-    }
+    clearProviderCache();
+    if (!res.headersSent) res.status(502).end("Radio stream unavailable");
   }
 });
 
