@@ -80,6 +80,41 @@ export default function Home() {
     };
   }, []);
 
+  // RadioStream321 needs the station page to be visited briefly before
+  // its live stream will accept a new listener. Do that silently in a
+  // short-lived iframe as soon as USALB opens. The iframe is denied autoplay
+  // and is removed after the provider has had time to initialize, so it can
+  // never become a second audible player.
+  useEffect(() => {
+    const iframe = document.createElement("iframe");
+    iframe.src = "https://usalbradio.radiostream321.com/";
+    iframe.title = "USALB radio connection warm-up";
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.setAttribute("allow", "autoplay 'none'");
+    iframe.tabIndex = -1;
+    iframe.loading = "eager";
+    iframe.style.position = "fixed";
+    iframe.style.width = "1px";
+    iframe.style.height = "1px";
+    iframe.style.left = "-20px";
+    iframe.style.top = "-20px";
+    iframe.style.opacity = "0";
+    iframe.style.pointerEvents = "none";
+    iframe.style.border = "0";
+    document.body.appendChild(iframe);
+
+    const removeWarmup = window.setTimeout(() => {
+      iframe.src = "about:blank";
+      iframe.remove();
+    }, 1500);
+
+    return () => {
+      window.clearTimeout(removeWarmup);
+      iframe.src = "about:blank";
+      iframe.remove();
+    };
+  }, []);
+
   // Wake the API and resolve the current provider mount as soon as the
   // listener opens USALB. This is important after a Replit cold start: the
   // first visitor should trigger the server-side resolver automatically
@@ -313,11 +348,8 @@ export default function Home() {
       // network work. Mobile Safari and some Android webviews otherwise lose
       // the user-gesture permission required by audio.play().
       // There is exactly one playback path: the real USALB audio element
-      // through the same-origin stream proxy. Provider discovery happens on
-      // the server and never creates a second/background audio player.
-      // This call is reached directly from the user's click handler. Do not
-      // await provider discovery here: /api/stream is the audio source and
-      // the browser must receive play() during the user-activation window.
+      // using the current provider stream URL. The RadioStream321 warm-up
+      // above is silent and temporary; it never owns playback.
       await playThroughStreamEndpoint(audio, isRetry);
       setIsPlaying(true);
       hasPlayedOnceRef.current = true;
