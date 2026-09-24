@@ -281,9 +281,15 @@ export default function Home() {
     // provider's rotating URL and session headers server-side.
     audio.src = `${STREAM_ENDPOINT}?_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
     audio.load();
-    // Keep play() in the same call stack as the user's tap. The endpoint
-    // resolves the rotating provider URL server-side after playback begins.
-    await audio.play();
+
+    // Start muted first so browsers with strict autoplay policy do not reject
+    // the media element before the live stream has produced its first bytes.
+    // The user's Play tap immediately restores audible playback.
+    const wasMuted = audio.muted;
+    audio.muted = true;
+    const playPromise = audio.play();
+    await playPromise;
+    audio.muted = wasMuted;
   }, []);
 
   const loadStreamUrl = useCallback(async (forceFresh = false) => {
@@ -651,14 +657,13 @@ export default function Home() {
             {/* Station logo — the circular USALB Radio mark from the station branding */}
             <div className="mb-8 flex w-full justify-center">
               <div
-                className="relative mt-6 flex h-[190px] w-[190px] items-center justify-center overflow-hidden rounded-full border border-red-500/40 bg-black/80 shadow-[0_0_45px_-10px_rgba(220,38,38,0.45)]"
+                className="relative mt-6 flex h-[210px] w-[210px] items-center justify-center"
                 data-testid="station-logo-frame"
               >
-                <div className="absolute inset-0 rounded-full border border-white/10" />
                 <img
                   src={logoSrc}
                   alt="USALB RADIO"
-                  className="relative h-full w-full rounded-full object-contain"
+                  className="h-full w-full object-contain"
                   data-testid="img-logo"
                 />
               </div>
