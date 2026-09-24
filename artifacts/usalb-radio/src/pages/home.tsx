@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Play, Pause, Volume2, VolumeX, Radio, Copy, Check, Share2, RefreshCw, WifiOff, Download, X, ArrowUp } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
-import logoSrc from "@assets/usalbradio_1775675611808.jpg";
+const logoSrc = "/usalb-logo-transparent.png";
 import { SiFacebook, SiWhatsapp, SiX, SiMessenger } from "react-icons/si";
 
 const ua = navigator.userAgent;
