@@ -29,50 +29,13 @@ function decodePageText(value: string) {
 }
 
 function extractStreamUrl(html: string): string | null {
-  // RadioStream321 publishes the actual relay URL in the station page source.
-  // Take the exact .mp3 URL used by its embedded player; do not depend on
-  // which streaming provider hostname happens to be behind it.
-  const page = decodePageText(html);
+  // This is the exact discovery method from the old working USALB player.
+  // RadioStream321 exposes the live relay URL directly in its page source.
+  const match =
+    html.match(/https?:\/\/[^\s"<>]+\.mp3[^\s"<>]*/i)
+    ?? html.match(/https?:\/\/[^\s"<>]+listen2myradio[^\s"<>]*/i);
 
-  const mp3Matches = [
-    ...page.matchAll(/https?:\\/\\/[^\\s"'<>]+?\\.mp3(?:\\?[^\\s"'<>]*)?/gi),
-  ];
-
-  const clean = (value: string) =>
-    value
-      .replace(/\\/g, "")
-      .replace(/&amp;/gi, "&")
-      .replace(/[),;'"]+$/, "");
-
-  // Prefer the first real MP3 source exposed by the station page. This is
-  // exactly what the working old USALB player did.
-  for (const match of mp3Matches) {
-    const url = clean(match[0]);
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol === "http:" || parsed.protocol === "https:") return url;
-    } catch {
-      // Continue looking for another candidate.
-    }
-  }
-
-  // Fallback for providers that publish the relay without an .mp3 suffix.
-  const candidates = new Set<string>();
-  for (const match of page.matchAll(/https?:\\/\\/[^\\s"'<>]+/gi)) candidates.add(clean(match[0]));
-  for (const match of page.matchAll(/(?:url|stream|mount|audio|playlist)\\s*[:=]\\s*["']([^"']+)["']/gi)) {
-    candidates.add(clean(match[1]));
-  }
-
-  for (const raw of candidates) {
-    try {
-      const parsed = new URL(raw, RADIO_PAGE);
-      if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.toString();
-    } catch {
-      // Ignore malformed candidates.
-    }
-  }
-
-  return null;
+  return match?.[0]?.replace(/&amp;/g, "&") ?? null;
 }
 
 async function fetchWithHeaderTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
