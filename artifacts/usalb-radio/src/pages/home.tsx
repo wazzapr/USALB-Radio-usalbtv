@@ -630,16 +630,6 @@ export default function Home() {
       <div className="relative z-10 w-full max-w-md mx-auto p-8">
         {/* Player Card */}
         <div className="bg-[#111] border border-red-900/30 rounded-3xl p-8 shadow-[0_0_50px_-12px_rgba(255,0,0,0.2)] backdrop-blur-xl relative overflow-hidden group">
-          {/* Exact USALB logo used as a subtle player background */}
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
-            <img
-              src={logoSrc}
-              alt=""
-              aria-hidden="true"
-              className="h-[78%] w-[78%] object-contain opacity-[0.10] mix-blend-screen"
-            />
-          </div>
-
           {/* Subtle animated glow inside card */}
           <div className={cn(
             "absolute -inset-20 bg-gradient-to-tr from-red-600/10 to-transparent blur-2xl opacity-0 transition-opacity duration-1000",
@@ -648,7 +638,7 @@ export default function Home() {
           
           <div className="relative z-10 flex flex-col items-center">
             {/* Live Indicator */}
-            <div className="flex items-center gap-2 mb-8 bg-black/50 px-4 py-1.5 rounded-full border border-red-900/50">
+            <div className="flex items-center gap-2 mb-6 bg-black/50 px-4 py-1.5 rounded-full border border-red-900/50">
               <div className={cn(
                 "w-2.5 h-2.5 rounded-full bg-red-600",
                 isPlaying ? "animate-pulse shadow-[0_0_10px_rgba(220,38,38,0.8)]" : "opacity-50"
@@ -659,7 +649,7 @@ export default function Home() {
             </div>
 
             {/* Station logo — the circular USALB Radio mark from the station branding */}
-            <div className="mb-12 flex justify-center">
+            <div className="mb-8 flex w-full justify-center">
               <div
                 className="relative flex h-48 w-48 items-center justify-center overflow-hidden rounded-full border border-red-500/40 bg-black/80 shadow-[0_0_45px_-10px_rgba(220,38,38,0.45)] sm:h-56 sm:w-56"
                 data-testid="station-logo-frame"
@@ -675,7 +665,7 @@ export default function Home() {
             </div>
 
             {/* Visualizer (Fake) */}
-            <div className="h-16 flex items-end justify-center gap-1.5 mb-12 w-full px-8">
+            <div className="h-16 flex items-end justify-center gap-1.5 mb-8 w-full px-8">
               {Array.from({ length: 24 }).map((_, i) => (
                 <div 
                   key={i}
