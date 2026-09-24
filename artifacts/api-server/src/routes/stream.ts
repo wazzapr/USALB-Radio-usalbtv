@@ -29,10 +29,10 @@ function decodePageText(value: string) {
 
 function extractStreamUrl(html: string): string | null {
   const page = decodePageText(html);
-
+  const candidates = [
     ...page.matchAll(/https?:\/\/[^\s"\'<>]+?\.mp3(?:\?[^\s"\'<>]*)?/gi),
     ...page.matchAll(/https?:\/\/[^\s"\'<>]+listen2myradio[^\s"\'<>]*/gi),
-    ...page.matchAll(/https?:\\/\\/[^\\s"'<>\\]+listen2myradio[^\\s"'<>\\]*/gi),
+  ];
   ];
 
   for (const match of candidates) {
