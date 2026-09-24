@@ -23,22 +23,35 @@ function decodePageText(value: string) {
   return value
     .replace(/\\u0026/gi, "&")
     .replace(/\\x26/gi, "&")
+    .replace(/\\u002F/gi, "/")
+    .replace(/\\\//g, "/")
     .replace(/&amp;/gi, "&")
-    .replace(/\\\//g, "/");
+    .replace(/&quot;/gi, '"');
 }
 
 function extractStreamUrl(html: string): string | null {
   const page = decodePageText(html);
+
+  // RadioStream321 can expose the current Listen2MyRadio mount either as a
+  // normal URL or inside escaped JavaScript/JSON. Find both forms.
   const candidates = [
     ...page.matchAll(/https?:\/\/[^\s"'<>]+?\.mp3(?:\?[^\s"'<>]*)?/gi),
-    ...page.matchAll(/https?:\/\/[^\s"'<>]+listen2myradio[^\s"'<>]*/gi),
+    ...page.matchAll(/https?:\/\/[^\s"'<>]*listen2myradio[^\s"'<>]*/gi),
   ];
 
   for (const match of candidates) {
-    const value = match[0].replace(/[),;]+$/, "");
+    const value = match[0]
+      .replace(/\\\//g, "/")
+      .replace(/[),;'"\]+$/, "");
+
     try {
       const url = new URL(value);
-      if (url.protocol === "http:" || url.protocol === "https:") return url.toString();
+      if (
+        (url.protocol === "http:" || url.protocol === "https:")
+        && /(?:\.mp3|listen2myradio)/i.test(url.toString())
+      ) {
+        return url.toString();
+      }
     } catch {
       // Ignore malformed page fragments and keep looking.
     }
@@ -103,13 +116,19 @@ const providerHeaders = () => ({
 
 const isAudioResponse = (response: Response) => {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  return response.ok
-    && Boolean(response.body)
-    && (
-      contentType.startsWith("audio/")
-      || contentType.includes("mpeg")
-      || contentType.includes("mp3")
-    );
+  // Some Listen2MyRadio mounts identify live MP3 as application/octet-stream
+  // or omit a useful content type. Reject obvious HTML/text responses, but
+  // allow the provider's binary live-audio responses.
+  const looksLikeHtml = contentType.includes("text/html") || contentType.includes("application/json");
+  const looksLikeAudio =
+    contentType.startsWith("audio/")
+    || contentType.includes("mpeg")
+    || contentType.includes("mp3")
+    || contentType.includes("octet-stream")
+    || contentType.includes("ogg")
+    || contentType.includes("aac");
+
+  return response.ok && Boolean(response.body) && !looksLikeHtml && looksLikeAudio;
 };
 
 async function fetchReadyProviderStream(): Promise<Response> {
