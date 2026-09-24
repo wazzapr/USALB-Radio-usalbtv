@@ -443,40 +443,93 @@ export default function Home() {
     audio.volume = volume;
   }, [volume]);
 
-  // Listen for mid-stream errors and disconnects
+  // Listen for mid-stream errors and reconnect exactly like pressing Play.
+  // A live HTTP stream can stop delivering bytes without producing a fatal
+  // error, so handle error, ended, stalled, and waiting. The browser's
+  // "stalled" event specifically means media data is no longer arriving
+  // unexpectedly; "ended" means playback stopped because no more data is
+  // available. We wait briefly before reconnecting so normal buffering does
+  // not cause a reconnect loop.
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    const handleError = () => {
-      // A failed initial load is handled by attemptPlay with the 10-second
-      // startup retry. Only use the faster retry after real playback began.
-      if (!isPlayingRef.current || streamOfflineRef.current) return;
-      setIsPlaying(false);
-      setIsLoading(false);
-      setStreamOffline(true);
-      startRetryCountdown(3, () => attemptPlay(true));
-    };
-    const handleStall = () => {
-      // Browsers can emit "stalled" while the first connection is still
-      // being established. Do not turn that startup failure into a 3-second
-      // loop or compete with attemptPlay's 10-second retry.
-      if (!isPlayingRef.current || streamOfflineRef.current) return;
-      const stallTimeout = setTimeout(() => {
-        if (isPlayingRef.current && !streamOfflineRef.current) {
-          audio.pause();
-          setIsPlaying(false);
-          setStreamOffline(true);
-          startRetryCountdown(3, () => attemptPlay(true));
-        }
+
+    let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+    let recoveredByThisEffect = false;
+
+    const scheduleRecovery = () => {
+      if (!isPlayingRef.current || streamOfflineRef.current || recoveryTimer) return;
+
+      recoveryTimer = setTimeout(() => {
+        recoveryTimer = null;
+        if (!isPlayingRef.current || streamOfflineRef.current) return;
+
+        // Stop the old HTTP response first. This is the important difference
+        // from simply calling play() again: attemptPlay(true) gets a fresh
+        // /api/stream connection, and the backend's fresh flag discards the
+        // cached provider URL before reconnecting.
+        audio.pause();
+        setIsPlaying(false);
+        setIsLoading(true);
+        setStreamOffline(true);
+        streamUrlRef.current = "";
+
+        startRetryCountdown(1, () => {
+          recoveredByThisEffect = true;
+          void attemptPlay(true);
+        });
       }, 5000);
-      const onPlaying = () => clearTimeout(stallTimeout);
-      audio.addEventListener("playing", onPlaying, { once: true });
     };
+
+    const handleError = () => {
+      // Initial connection errors are handled by attemptPlay itself. Only
+      // recover automatically after the listener has already been playing.
+      if (!isPlayingRef.current || streamOfflineRef.current) return;
+      scheduleRecovery();
+    };
+
+    const handleEnded = () => {
+      if (!isPlayingRef.current || streamOfflineRef.current) return;
+      scheduleRecovery();
+    };
+
+    const handleStall = () => {
+      if (!isPlayingRef.current || streamOfflineRef.current) return;
+      scheduleRecovery();
+    };
+
+    const handleWaiting = () => {
+      if (!isPlayingRef.current || streamOfflineRef.current) return;
+      scheduleRecovery();
+    };
+
+    const handlePlaying = () => {
+      if (recoveryTimer) {
+        clearTimeout(recoveryTimer);
+        recoveryTimer = null;
+      }
+      // A successful playing event clears the temporary offline state if the
+      // reconnect was initiated by this listener.
+      if (recoveredByThisEffect) {
+        recoveredByThisEffect = false;
+        setStreamOffline(false);
+        setIsLoading(false);
+      }
+    };
+
     audio.addEventListener("error", handleError);
+    audio.addEventListener("ended", handleEnded);
     audio.addEventListener("stalled", handleStall);
+    audio.addEventListener("waiting", handleWaiting);
+    audio.addEventListener("playing", handlePlaying);
+
     return () => {
+      if (recoveryTimer) clearTimeout(recoveryTimer);
       audio.removeEventListener("error", handleError);
+      audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("stalled", handleStall);
+      audio.removeEventListener("waiting", handleWaiting);
+      audio.removeEventListener("playing", handlePlaying);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attemptPlay, startRetryCountdown]);
