@@ -50,6 +50,8 @@ export default function Home() {
   const streamOfflineRef = useRef(false);
   const hasPlayedOnceRef = useRef(false);
   const autoplayBlockedRef = useRef(false);
+  const userStoppedRef = useRef(false);
+  const autoRecoveringRef = useRef(false);
   useEffect(() => { streamOfflineRef.current = streamOffline; }, [streamOffline]);
 
   // Use a ref for the stream URL so updating it NEVER causes a re-render
@@ -308,7 +310,7 @@ export default function Home() {
   const attemptPlay = useCallback(async (isRetry = false, fromUserGesture = false) => {
     const audio = audioRef.current;
     if (!audio || playAttemptRef.current) return;
-    if (autoplayBlockedRef.current && !fromUserGesture) return;
+    if (autoplayBlockedRef.current && !fromUserGesture && !hasPlayedOnceRef.current) return;
     playAttemptRef.current = true;
     setIsLoading(true);
     try {
@@ -396,12 +398,15 @@ export default function Home() {
 
   const togglePlay = () => {
     if (isPlaying) {
+      userStoppedRef.current = true;
+      autoRecoveringRef.current = false;
       audioRef.current?.pause();
       setIsPlaying(false);
       clearRetryTimers();
       setStreamOffline(false);
       removePrimerIframe();
     } else {
+      userStoppedRef.current = false;
       autoplayBlockedRef.current = false;
       setAutoplayBlocked(false);
       attemptPlay(streamOffline, true);
@@ -443,96 +448,64 @@ export default function Home() {
     audio.volume = volume;
   }, [volume]);
 
-  // Listen for mid-stream errors and reconnect exactly like pressing Play.
-  // A live HTTP stream can stop delivering bytes without producing a fatal
-  // error, so handle error, ended, stalled, and waiting. The browser's
-  // "stalled" event specifically means media data is no longer arriving
-  // unexpectedly; "ended" means playback stopped because no more data is
-  // available. We wait briefly before reconnecting so normal buffering does
-  // not cause a reconnect loop.
+  // Once playback has successfully started, recover automatically from a
+  // provider/network interruption. The listener should not need to press Play
+  // again unless they deliberately stopped playback.
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
     let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
-    let recoveredByThisEffect = false;
 
     const scheduleRecovery = () => {
-      if (!isPlayingRef.current || streamOfflineRef.current || recoveryTimer) return;
+      if (!hasPlayedOnceRef.current || userStoppedRef.current || recoveryTimer) return;
+
+      autoRecoveringRef.current = true;
+      setStreamOffline(true);
+      setIsLoading(true);
 
       recoveryTimer = setTimeout(() => {
         recoveryTimer = null;
-        if (!isPlayingRef.current || streamOfflineRef.current) return;
+        if (userStoppedRef.current || !hasPlayedOnceRef.current) {
+          autoRecoveringRef.current = false;
+          return;
+        }
 
-        // Stop the old HTTP response first. This is the important difference
-        // from simply calling play() again: attemptPlay(true) gets a fresh
-        // /api/stream connection, and the backend's fresh flag discards the
-        // cached provider URL before reconnecting.
         audio.pause();
-        setIsPlaying(false);
-        setIsLoading(true);
-        setStreamOffline(true);
         streamUrlRef.current = "";
-
-        startRetryCountdown(1, () => {
-          recoveredByThisEffect = true;
-          void attemptPlay(true);
-        });
-      }, 5000);
+        void attemptPlay(true);
+      }, 1500);
     };
 
-    const handleError = () => {
-      // Initial connection errors are handled by attemptPlay itself. Only
-      // recover automatically after the listener has already been playing.
-      if (!isPlayingRef.current || streamOfflineRef.current) return;
-      scheduleRecovery();
-    };
-
-    const handleEnded = () => {
-      if (!isPlayingRef.current || streamOfflineRef.current) return;
-      scheduleRecovery();
-    };
-
-    const handleStall = () => {
-      if (!isPlayingRef.current || streamOfflineRef.current) return;
-      scheduleRecovery();
-    };
-
-    const handleWaiting = () => {
-      if (!isPlayingRef.current || streamOfflineRef.current) return;
-      scheduleRecovery();
-    };
+    const handleFailure = () => scheduleRecovery();
 
     const handlePlaying = () => {
+      if (autoRecoveringRef.current) {
+        autoRecoveringRef.current = false;
+        setStreamOffline(false);
+        setIsLoading(false);
+      }
       if (recoveryTimer) {
         clearTimeout(recoveryTimer);
         recoveryTimer = null;
       }
-      // A successful playing event clears the temporary offline state if the
-      // reconnect was initiated by this listener.
-      if (recoveredByThisEffect) {
-        recoveredByThisEffect = false;
-        setStreamOffline(false);
-        setIsLoading(false);
-      }
     };
 
-    audio.addEventListener("error", handleError);
-    audio.addEventListener("ended", handleEnded);
-    audio.addEventListener("stalled", handleStall);
-    audio.addEventListener("waiting", handleWaiting);
+    audio.addEventListener("error", handleFailure);
+    audio.addEventListener("ended", handleFailure);
+    audio.addEventListener("stalled", handleFailure);
+    audio.addEventListener("waiting", handleFailure);
     audio.addEventListener("playing", handlePlaying);
 
     return () => {
       if (recoveryTimer) clearTimeout(recoveryTimer);
-      audio.removeEventListener("error", handleError);
-      audio.removeEventListener("ended", handleEnded);
-      audio.removeEventListener("stalled", handleStall);
-      audio.removeEventListener("waiting", handleWaiting);
+      audio.removeEventListener("error", handleFailure);
+      audio.removeEventListener("ended", handleFailure);
+      audio.removeEventListener("stalled", handleFailure);
+      audio.removeEventListener("waiting", handleFailure);
       audio.removeEventListener("playing", handlePlaying);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attemptPlay, startRetryCountdown]);
+  }, [attemptPlay]);
 
   // Reconnect automatically when the user returns to this tab while offline
   useEffect(() => {
