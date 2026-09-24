@@ -32,33 +32,22 @@ function extractStreamUrl(html: string): string | null {
   const page = decodePageText(html);
   const candidates = new Set<string>();
 
-  // RadioStream321 can expose the current mount in normal HTML attributes,
-  // JavaScript strings, or escaped markup. Collect all absolute/protocol-relative
-  // URLs first, then choose only a real provider host.
   const add = (value: string | undefined) => {
     if (!value) return;
     candidates.add(
       value
-        .replace(/\\\\\//g, "/")
+        .replace(/\\\//g, "/")
         .replace(/&amp;/gi, "&")
         .replace(/[),;'"]+$/, ""),
     );
   };
 
-  for (const match of page.matchAll(/https?:\\/\\/[^\\s"'<>]+/gi)) {
-    add(match[0]);
-  }
-
-  for (const match of page.matchAll(/(?:src|href)\\s*=\\s*["']([^"']+)["']/gi)) {
-    add(match[1]);
-  }
-
-  for (const match of page.matchAll(/(?:url|stream|mount|audio|playlist)\\s*[:=]\\s*["']([^"']+)["']/gi)) {
-    add(match[1]);
-  }
+  for (const match of page.matchAll(/https?:\/\/[^\s"'<>]+/gi)) add(match[0]);
+  for (const match of page.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/gi)) add(match[1]);
+  for (const match of page.matchAll(/(?:url|stream|mount|audio|playlist)\s*[:=]\s*["']([^"']+)["']/gi)) add(match[1]);
 
   const providerPattern =
-    /(?:listen2myradio|listen2myshow|radio12345|radiostream123)\\.com/i;
+    /(?:listen2myradio|listen2myshow|radio12345|radiostream123)\.com/i;
 
   const rankedCandidates = [...candidates]
     .map((raw) => {
@@ -73,9 +62,9 @@ function extractStreamUrl(html: string): string | null {
       try {
         const parsed = new URL(url);
         return (
-          (parsed.protocol === "http:" || parsed.protocol === "https:")
-          && providerPattern.test(parsed.hostname)
-          && !/radiostream321\\.com$/i.test(parsed.hostname)
+          (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+          providerPattern.test(parsed.hostname) &&
+          !/radiostream321\.com$/i.test(parsed.hostname)
         );
       } catch {
         return false;
@@ -84,10 +73,10 @@ function extractStreamUrl(html: string): string | null {
     .sort((a, b) => {
       const score = (value: string) => {
         let points = 0;
-        if (/\\/live\\.mp3(?:[?]|$)/i.test(value)) points += 100;
-        if (/\\.(?:mp3|aac|ogg)(?:[?]|$)/i.test(value)) points += 80;
+        if (/\/live\.mp3(?:[?]|$)/i.test(value)) points += 100;
+        if (/\.(?:mp3|aac|ogg)(?:[?]|$)/i.test(value)) points += 80;
         if (/typeportmount=/i.test(value)) points += 60;
-        if (/\\/intro\\.mp3(?:[?]|$)/i.test(value)) points += 40;
+        if (/\/intro\.mp3(?:[?]|$)/i.test(value)) points += 40;
         if (/listen2myradio|listen2myshow|radio12345|radiostream123/i.test(value)) points += 10;
         return points;
       };
