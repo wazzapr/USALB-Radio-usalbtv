@@ -142,7 +142,7 @@ async function openProviderStream(url: string): Promise<Response> {
   }, 8000);
 }
 
-async function validateAudioResponse(response: Response): Promise<{ response: Response; prefix: Buffer }> {
+async function validateAudioResponse(response: Response): Promise<Response> {
   if (!response.ok || !response.body) {
     await response.body?.cancel();
     throw new Error("Provider did not return a stream");
@@ -154,54 +154,56 @@ async function validateAudioResponse(response: Response): Promise<{ response: Re
     throw new Error("Provider returned HTML/JSON instead of audio");
   }
 
-  const reader = response.body.getReader();
-  const first = await reader.read();
-  if (first.done || !first.value?.byteLength) {
-    reader.releaseLock();
-    throw new Error("Provider returned an empty stream");
+  // Inspect the first bytes without consuming them from the stream that will
+  // actually be sent to the listener. The previous implementation attempted
+  // to rebuild the stream from a ReadableStream reader, which is not a valid
+  // Node WebStream and could leave the proxy with no playable body.
+  const [inspectionStream, playbackStream] = response.body.tee();
+  const reader = inspectionStream.getReader();
+
+  try {
+    const first = await reader.read();
+
+    if (first.done || !first.value?.byteLength) {
+      throw new Error("Provider returned an empty stream");
+    }
+
+    const prefix = Buffer.from(first.value);
+    const sample = prefix.toString("utf8").trim().slice(0, 512).toLowerCase();
+
+    const looksLikeHtml =
+      sample.startsWith("<!doctype")
+      || sample.startsWith("<html")
+      || sample.startsWith("<head")
+      || sample.startsWith("<body")
+      || sample.includes("<html")
+      || sample.includes("<!doctype");
+
+    if (looksLikeHtml || prefix.length <= 1) {
+      throw new Error("Provider returned an invalid placeholder");
+    }
+
+    const looksLikeAudio =
+      contentType === ""
+      || contentType.startsWith("audio/")
+      || contentType.includes("mpeg")
+      || contentType.includes("mp3")
+      || contentType.includes("octet-stream")
+      || contentType.includes("ogg")
+      || contentType.includes("aac")
+      || contentType.startsWith("text/plain");
+
+    if (!looksLikeAudio) {
+      throw new Error(\`Unsupported provider content type: \${contentType}\`);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
   }
 
-  const prefix = Buffer.from(first.value);
-  const sample = prefix.toString("utf8").trim().slice(0, 512).toLowerCase();
-  const looksLikeHtml =
-    sample.startsWith("<!doctype")
-    || sample.startsWith("<html")
-    || sample.startsWith("<head")
-    || sample.startsWith("<body")
-    || sample.includes("<html")
-    || sample.includes("<!doctype");
-
-  if (looksLikeHtml || prefix.length <= 1) {
-    await reader.cancel();
-    throw new Error("Provider returned an invalid placeholder");
-  }
-
-  const looksLikeAudio =
-    contentType === ""
-    || contentType.startsWith("audio/")
-    || contentType.includes("mpeg")
-    || contentType.includes("mp3")
-    || contentType.includes("octet-stream")
-    || contentType.includes("ogg")
-    || contentType.includes("aac")
-    || contentType.startsWith("text/plain");
-
-  if (!looksLikeAudio) {
-    await reader.cancel();
-    throw new Error(`Unsupported provider content type: ${contentType}`);
-  }
-
-  // Put the bytes read for validation back in front of the remaining body.
-  const body = new PassThrough();
-  body.end(prefix);
-  Readable.fromWeb(reader as import("node:stream/web").ReadableStream).pipe(body, { end: true } as any);
-
-  const replacement = new Response(Readable.toWeb(body) as any, {
+  return new Response(playbackStream, {
     status: response.status,
     headers: response.headers,
   });
-
-  return { response: replacement, prefix };
 }
 
 async function fetchReadyProviderStream(): Promise<Response> {
