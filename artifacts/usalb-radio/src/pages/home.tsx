@@ -2,8 +2,9 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Play, Pause, Volume2, VolumeX, Radio, Copy, Check, Share2, RefreshCw, WifiOff, Download, X, ArrowUp } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
-const logoSrc = "/usalb-logo-transparent.png";
 import { SiFacebook, SiWhatsapp, SiX, SiMessenger } from "react-icons/si";
+
+const logoSrc = "/usalb-logo-transparent.png";
 
 const ua = navigator.userAgent;
 const isIOS = /iP(hone|ad|od)/.test(ua);
