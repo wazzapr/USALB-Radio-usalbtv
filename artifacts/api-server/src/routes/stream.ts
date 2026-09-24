@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { Readable } from "node:stream";
+import { Readable, PassThrough } from "node:stream";
 
 const streamRouter = Router();
 
@@ -30,11 +30,8 @@ function decodePageText(value: string) {
 
 function extractStreamUrl(html: string): string | null {
   const page = decodePageText(html);
-
-  // RadioStream321 renders the current Listen2MyRadio mount inside the
-  // station page. Do not depend on one exact URL shape: the mount can rotate
-  // and the provider may expose it in href/src attributes or JavaScript.
   const candidates = new Set<string>();
+
   const addCandidates = (pattern: RegExp) => {
     for (const match of page.matchAll(pattern)) {
       const raw = match[1] ?? match[0];
@@ -42,14 +39,12 @@ function extractStreamUrl(html: string): string | null {
     }
   };
 
-  addCandidates(/https?:\/\/[^\s"'<>]+/gi);
-  addCandidates(/(?:src|href)\s*=\s*["']([^"']+)["']/gi);
+  addCandidates(/https?:\\/\\/[^\\s"'<>]+/gi);
+  addCandidates(/(?:src|href)\\s*=\\s*["']([^"']+)["']/gi);
 
   const providerPattern =
     /(?:listen2myradio|listen2myshow|radio12345|radiostream123)\\.com/i;
 
-  // Prefer the actual live audio mount over generic provider/profile links.
-  // RadioStream321 pages commonly expose the mount as /live.mp3?typeportmount=... .
   const rankedCandidates = [...candidates].sort((a, b) => {
     const score = (value: string) => {
       let points = 0;
@@ -64,9 +59,7 @@ function extractStreamUrl(html: string): string | null {
   });
 
   for (const raw of rankedCandidates) {
-    const value = raw
-      .replace(/&amp;/gi, "&")
-      .replace(/[),;'\"]+$/, "");
+    const value = raw.replace(/&amp;/gi, "&").replace(/[),;'"]+$/, "");
 
     try {
       const url = new URL(value, RADIO_PAGE);
@@ -90,19 +83,14 @@ async function fetchWithHeaderTimeout(url: string, options: RequestInit, timeout
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    // fetch() resolves when response headers arrive. The live audio body must
-    // NOT inherit the connection timeout or it would be killed while playing.
-    return response;
+    return await fetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
 }
 
 async function fetchStreamUrl(forceFresh = false): Promise<string> {
-  if (!forceFresh && cachedUrl && Date.now() < cacheExpiry) {
-    return cachedUrl;
-  }
+  if (!forceFresh && cachedUrl && Date.now() < cacheExpiry) return cachedUrl;
 
   if (forceFresh) clearProviderCache();
 
@@ -123,7 +111,6 @@ async function fetchStreamUrl(forceFresh = false): Promise<string> {
 
   const html = await res.text();
   const url = extractStreamUrl(html);
-
   if (!url) throw new Error("Stream URL not found in RadioStream321 page");
 
   cachedUrl = url;
@@ -139,12 +126,48 @@ const providerHeaders = () => ({
   ...(cachedSessionCookie ? { Cookie: cachedSessionCookie } : {}),
 });
 
-const isAudioResponse = (response: Response) => {
+async function openProviderStream(url: string): Promise<Response> {
+  return fetchWithHeaderTimeout(url, {
+    headers: providerHeaders(),
+    redirect: "follow",
+    cache: "no-store",
+  }, 8000);
+}
+
+async function validateAudioResponse(response: Response): Promise<{ response: Response; prefix: Buffer }> {
+  if (!response.ok || !response.body) {
+    await response.body?.cancel();
+    throw new Error("Provider did not return a stream");
+  }
+
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  // Some Listen2MyRadio mounts identify live MP3 as application/octet-stream
-  // or omit a useful content type. Reject obvious HTML/text responses, but
-  // allow the provider's binary live-audio responses.
-  const looksLikeHtml = contentType.includes("text/html") || contentType.includes("application/json");
+  if (contentType.includes("text/html") || contentType.includes("application/json")) {
+    await response.body.cancel();
+    throw new Error("Provider returned HTML/JSON instead of audio");
+  }
+
+  const reader = response.body.getReader();
+  const first = await reader.read();
+  if (first.done || !first.value?.byteLength) {
+    reader.releaseLock();
+    throw new Error("Provider returned an empty stream");
+  }
+
+  const prefix = Buffer.from(first.value);
+  const sample = prefix.toString("utf8").trim().slice(0, 512).toLowerCase();
+  const looksLikeHtml =
+    sample.startsWith("<!doctype")
+    || sample.startsWith("<html")
+    || sample.startsWith("<head")
+    || sample.startsWith("<body")
+    || sample.includes("<html")
+    || sample.includes("<!doctype");
+
+  if (looksLikeHtml || prefix.length <= 1) {
+    await reader.cancel();
+    throw new Error("Provider returned an invalid placeholder");
+  }
+
   const looksLikeAudio =
     contentType === ""
     || contentType.startsWith("audio/")
@@ -155,32 +178,35 @@ const isAudioResponse = (response: Response) => {
     || contentType.includes("aac")
     || contentType.startsWith("text/plain");
 
-  return response.ok && Boolean(response.body) && !looksLikeHtml && looksLikeAudio;
-};
+  if (!looksLikeAudio) {
+    await reader.cancel();
+    throw new Error(`Unsupported provider content type: ${contentType}`);
+  }
+
+  // Put the bytes read for validation back in front of the remaining body.
+  const body = new PassThrough();
+  body.end(prefix);
+  Readable.fromWeb(reader as import("node:stream/web").ReadableStream).pipe(body, { end: true } as any);
+
+  const replacement = new Response(Readable.toWeb(body) as any, {
+    status: response.status,
+    headers: response.headers,
+  });
+
+  return { response: replacement, prefix };
+}
 
 async function fetchReadyProviderStream(): Promise<Response> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < PROVIDER_RETRIES; attempt += 1) {
     try {
-      // Rediscover after a failed known mount. Listen2MyRadio can rotate the
-      // mount while the station is waking up.
       const url = await fetchStreamUrl(true);
-      const upstream = await fetchWithHeaderTimeout(url, {
-        headers: providerHeaders(),
-        redirect: "follow",
-        cache: "no-store",
-      }, 8000);
-
-      if (isAudioResponse(upstream)) {
-        cachedUrl = url;
-        cacheExpiry = Date.now() + CACHE_TTL_MS;
-        return upstream;
-      }
-
-      await upstream.body?.cancel();
-      clearProviderCache();
-      lastError = new Error("Radio provider returned a non-audio response");
+      const upstream = await openProviderStream(url);
+      const validated = await validateAudioResponse(upstream);
+      cachedUrl = url;
+      cacheExpiry = Date.now() + CACHE_TTL_MS;
+      return validated.response;
     } catch (error) {
       clearProviderCache();
       lastError = error;
@@ -212,6 +238,7 @@ streamRouter.get("/stream", async (req, res) => {
   try {
     const upstream = await fetchReadyProviderStream();
     res.status(upstream.status);
+
     const upstreamContentType = upstream.headers.get("content-type")?.toLowerCase() ?? "";
     res.setHeader(
       "Content-Type",
@@ -222,10 +249,8 @@ streamRouter.get("/stream", async (req, res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
     res.setHeader("Accept-Ranges", "none");
     res.setHeader("X-Accel-Buffering", "no");
-    // Do not forward Content-Length for a live stream. Let Node use chunked
-    // streaming so a provider cannot make the browser think the live stream
-    // has a finite end.
     res.flushHeaders();
+
     Readable.fromWeb(upstream.body as import("node:stream/web").ReadableStream).pipe(res);
   } catch {
     clearProviderCache();
