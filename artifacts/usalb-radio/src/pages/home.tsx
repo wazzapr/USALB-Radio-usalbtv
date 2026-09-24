@@ -300,6 +300,9 @@ export default function Home() {
       // There is exactly one playback path: the real USALB audio element
       // through the same-origin stream proxy. Provider discovery happens on
       // the server and never creates a second/background audio player.
+      // This call is reached directly from the user's click handler. Do not
+      // await provider discovery here: /api/stream is the audio source and
+      // the browser must receive play() during the user-activation window.
       await playThroughStreamEndpoint(audio, isRetry);
       setIsPlaying(true);
       hasPlayedOnceRef.current = true;
@@ -656,12 +659,15 @@ export default function Home() {
 
             {/* Play Button */}
             <button
-               // pointerdown runs at the start of the phone's touch gesture.
-               // This is more reliable than waiting for click in Messenger's
-               // iOS webview, where the activation window is very short.
-               onPointerDown={togglePlay}
+               // Use a real click activation for audio playback. Some browsers
+               // and embedded webviews do not grant media permission to
+               // pointerdown, which can incorrectly produce NotAllowedError.
+               onClick={togglePlay}
                onKeyDown={(event) => {
-                 if (event.key === "Enter" || event.key === " ") togglePlay();
+                 if (event.key === "Enter" || event.key === " ") {
+                   event.preventDefault();
+                   togglePlay();
+                 }
                }}
               className={cn(
                 "w-28 h-28 rounded-full flex items-center justify-center transition-all duration-500 relative group/btn mb-4",
