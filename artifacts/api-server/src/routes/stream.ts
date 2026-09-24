@@ -4,7 +4,6 @@ import { Readable } from "node:stream";
 const streamRouter = Router();
 
 const RADIO_PAGE = "https://usalbradio.radiostream321.com/";
-const FALLBACK_URL = "";
 const PROVIDER_RETRIES = 4;
 const PROVIDER_RETRY_DELAY_MS = 750;
 const CACHE_TTL_MS = 4 * 60 * 1000;
@@ -43,23 +42,23 @@ function extractStreamUrl(html: string): string | null {
     }
   };
 
-  addCandidates(/https?:\\/\\/[^\\s"'<>]+/gi);
-  addCandidates(/(?:src|href)\\s*=\\s*["']([^"']+)["']/gi);
+  addCandidates(/https?:\/\/[^\s"'<>]+/gi);
+  addCandidates(/(?:src|href)\s*=\s*["']([^"']+)["']/gi);
 
   const providerPattern =
-    /(?:listen2myradio|listen2myshow|radio12345|radiostream123)\\.com/i;
+    /(?:listen2myradio|listen2myshow|radio12345|radiostream123)\.com/i;
 
   for (const raw of candidates) {
     const value = raw
       .replace(/&amp;/gi, "&")
-      .replace(/[),;'"\\]+$/, "");
+      .replace(/[),;'"]+$/, "");
 
     try {
       const url = new URL(value, RADIO_PAGE);
       if (
         (url.protocol === "http:" || url.protocol === "https:")
         && providerPattern.test(url.hostname)
-        && !/radiostream321\\.com$/i.test(url.hostname)
+        && !/radiostream321\.com$/i.test(url.hostname)
       ) {
         return url.toString();
       }
@@ -148,12 +147,7 @@ async function fetchReadyProviderStream(): Promise<Response> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < PROVIDER_RETRIES; attempt += 1) {
-    // The last known USALB mount is the fastest path to live audio.
-    // Try it first so a slow/unavailable RadioStream321 page cannot block
-    // the listener from connecting. Dynamic discovery remains the recovery
-    // path when the mount has rotated.
-    if (attempt === 0) {
-      try {
+    try {
         const fallback = await fetchWithHeaderTimeout(FALLBACK_URL, {
           headers: providerHeaders(),
           redirect: "follow",
