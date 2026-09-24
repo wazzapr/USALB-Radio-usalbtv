@@ -42,7 +42,7 @@ function extractStreamUrl(html: string): string | null {
   for (const match of candidates) {
     const value = match[0]
       .replace(/\\\//g, "/")
-      .replace(/[),;'"\]+$/, "");
+      .replace(/[),;'"]+$/, "");
 
     try {
       const url = new URL(value);
