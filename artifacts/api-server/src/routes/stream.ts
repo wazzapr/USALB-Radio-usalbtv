@@ -7,40 +7,78 @@ const RADIO_PAGE = "https://usalbradio.radiostream321.com/";
 const FALLBACK_URL = "https://uk4freenew.listen2myradio.com/live.mp3?typeportmount=s1_9311_stream_687568716";
 const PROVIDER_RETRIES = 8;
 const PROVIDER_RETRY_DELAY_MS = 500;
+const CACHE_TTL_MS = 60 * 1000;
 
 let cachedUrl: string | null = null;
 let cachedSessionCookie: string | null = null;
 let cacheExpiry = 0;
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function clearProviderCache() {
+  cachedUrl = null;
+  cachedSessionCookie = null;
+  cacheExpiry = 0;
+}
+
+function decodePageText(value: string) {
+  return value
+    .replace(/\\u0026/gi, "&")
+    .replace(/\\x26/gi, "&")
+    .replace(/&amp;/gi, "&")
+    .replace(/\\\//g, "/");
+}
+
+function extractStreamUrl(html: string): string | null {
+  const page = decodePageText(html);
+
+  const candidates = [
+    ...page.matchAll(/https?:\\/\\/[^\\s"'<>\\]+?\\.mp3(?:\\?[^\\s"'<>\\]*)?/gi),
+    ...page.matchAll(/https?:\\/\\/[^\\s"'<>\\]+listen2myradio[^\\s"'<>\\]*/gi),
+  ];
+
+  for (const match of candidates) {
+    const value = match[0].replace(/[),;]+$/, "");
+    try {
+      const url = new URL(value);
+      if (url.protocol === "http:" || url.protocol === "https:") return url.toString();
+    } catch {
+      // Ignore malformed page fragments and keep looking.
+    }
+  }
+
+  return null;
+}
 
 async function fetchStreamUrl(forceFresh = false): Promise<string> {
   if (!forceFresh && cachedUrl && Date.now() < cacheExpiry) {
     return cachedUrl;
   }
 
+  if (forceFresh) clearProviderCache();
+
   const res = await fetch(RADIO_PAGE, {
     headers: {
       Accept: "text/html,application/xhtml+xml",
       "User-Agent": "Mozilla/5.0 (compatible; USALBRadioPlayer/1.0)",
+      "Cache-Control": "no-cache",
     },
+    cache: "no-store",
+    redirect: "follow",
     signal: AbortSignal.timeout(8000),
   });
 
+  if (!res.ok) throw new Error(`Radio page returned ${res.status}`);
+
   const setCookie = res.headers.get("set-cookie");
-  cachedSessionCookie = setCookie?.split(";")[0] ?? null;
+  if (setCookie) cachedSessionCookie = setCookie.split(";")[0] ?? null;
+
   const html = await res.text();
+  const url = extractStreamUrl(html);
 
-  // The stream URL appears in the page source as plain text inside a hidden div
-  const match = html.match(/https?:\/\/[^\s"<>]+\.mp3[^\s"<>]*/i)
-    ?? html.match(/https?:\/\/[^\s"<>]+listen2myradio[^\s"<>]*/i);
+  if (!url) throw new Error("Stream URL not found in RadioStream321 page");
 
-  if (match) {
-    cachedUrl = match[0];
-    cacheExpiry = Date.now() + CACHE_TTL_MS;
-    return cachedUrl;
-  }
-
-  throw new Error("Stream URL not found in page source");
+  cachedUrl = url;
+  cacheExpiry = Date.now() + CACHE_TTL_MS;
+  return url;
 }
 
 const providerHeaders = () => ({
@@ -53,10 +91,13 @@ const providerHeaders = () => ({
 
 const isAudioResponse = (response: Response) => {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  const contentLength = response.headers.get("content-length");
   return response.ok
     && Boolean(response.body)
-    && (contentType.startsWith("audio/") || (!contentType && contentLength !== "1"));
+    && (
+      contentType.startsWith("audio/")
+      || contentType.includes("mpeg")
+      || contentType.includes("mp3")
+    );
 };
 
 async function fetchReadyProviderStream(): Promise<Response> {
@@ -64,21 +105,29 @@ async function fetchReadyProviderStream(): Promise<Response> {
 
   for (let attempt = 0; attempt < PROVIDER_RETRIES; attempt += 1) {
     try {
-      // Refresh the page/session on every attempt. Listen2MyRadio can rotate
-      // the mount while it is waking up, and an old mount returns only "\n".
+      // Always rediscover after the first failed attempt. Listen2MyRadio can
+      // change the mount while the station is waking up.
       const url = await fetchStreamUrl(attempt > 0);
       const upstream = await fetch(url, {
         headers: providerHeaders(),
-        signal: AbortSignal.timeout(5000),
+        redirect: "follow",
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
       });
 
       if (isAudioResponse(upstream)) {
+        // Keep the working URL for subsequent listeners, but never trust it
+        // forever; the short TTL and retry path handle provider rotation.
+        cachedUrl = url;
+        cacheExpiry = Date.now() + CACHE_TTL_MS;
         return upstream;
       }
 
       await upstream.body?.cancel();
+      clearProviderCache();
       lastError = new Error("Radio provider is still waking up");
     } catch (error) {
+      clearProviderCache();
       lastError = error;
     }
 
@@ -89,27 +138,21 @@ async function fetchReadyProviderStream(): Promise<Response> {
 }
 
 streamRouter.get("/stream-url", async (req, res) => {
-  if (req.query.fresh === "1") {
-    cachedUrl = null;
-    cachedSessionCookie = null;
-    cacheExpiry = 0;
-  }
+  const forceFresh = req.query.fresh === "1";
+
   try {
-    const url = await fetchStreamUrl();
+    const url = await fetchStreamUrl(forceFresh);
+    res.setHeader("Cache-Control", "no-store");
     res.json({ url, source: "live" });
-  } catch (err) {
+  } catch {
+    // Keep the old known mount only as a last-resort compatibility fallback.
+    res.setHeader("Cache-Control", "no-store");
     res.json({ url: FALLBACK_URL, source: "fallback" });
   }
 });
 
-// Keep the browser's first play() call tied to the user's click. The client
-// can start loading this same-origin endpoint immediately while the server
-// resolves and proxies the provider's rotating stream address.
 streamRouter.get("/stream", async (req, res) => {
-  if (req.query.fresh === "1") {
-    cachedUrl = null;
-    cacheExpiry = 0;
-  }
+  if (req.query.fresh === "1") clearProviderCache();
 
   try {
     const upstream = await fetchReadyProviderStream();
@@ -120,12 +163,13 @@ streamRouter.get("/stream", async (req, res) => {
     if (contentLength) res.setHeader("Content-Length", contentLength);
     Readable.fromWeb(upstream.body as import("node:stream/web").ReadableStream).pipe(res);
   } catch {
-    // A second provider request with the known backup address gives the
-    // browser a real audio response even when the station page rotates its
-    // stream address during startup.
+    // Last-resort compatibility path. The normal path always tries the
+    // current URL discovered from RadioStream321 first.
     try {
       const fallback = await fetch(FALLBACK_URL, {
         headers: providerHeaders(),
+        redirect: "follow",
+        cache: "no-store",
         signal: AbortSignal.timeout(12000),
       });
       if (!isAudioResponse(fallback)) {
