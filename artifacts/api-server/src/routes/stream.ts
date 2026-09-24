@@ -161,6 +161,29 @@ async function fetchReadyProviderStream(): Promise<Response> {
       lastError = error;
     }
 
+    // Try the last known working mount immediately after the first
+    // discovery failure. This prevents a cold/stalled RadioStream321 page
+    // from making the listener wait through the entire retry cycle.
+    if (attempt === 0) {
+      try {
+        const fallback = await fetchWithHeaderTimeout(FALLBACK_URL, {
+          headers: providerHeaders(),
+          redirect: "follow",
+          cache: "no-store",
+        }, 8000);
+
+        if (isAudioResponse(fallback)) {
+          cachedUrl = FALLBACK_URL;
+          cacheExpiry = Date.now() + CACHE_TTL_MS;
+          return fallback;
+        }
+
+        await fallback.body?.cancel();
+      } catch (fallbackError) {
+        lastError = fallbackError;
+      }
+    }
+
     await new Promise((resolve) => setTimeout(resolve, PROVIDER_RETRY_DELAY_MS));
   }
 
