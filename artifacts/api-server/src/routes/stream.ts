@@ -33,7 +33,6 @@ function extractStreamUrl(html: string): string | null {
     ...page.matchAll(/https?:\/\/[^\s"\'<>]+?\.mp3(?:\?[^\s"\'<>]*)?/gi),
     ...page.matchAll(/https?:\/\/[^\s"\'<>]+listen2myradio[^\s"\'<>]*/gi),
   ];
-  ];
 
   for (const match of candidates) {
     const value = match[0].replace(/[),;]+$/, "");
