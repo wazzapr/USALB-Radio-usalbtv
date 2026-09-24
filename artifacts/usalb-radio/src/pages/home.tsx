@@ -321,17 +321,19 @@ export default function Home() {
       }
       removePrimerIframe();
       setIsPlaying(false);
-      // Browser autoplay restrictions are not a station outage. Explain the
-      // required user action instead of showing a misleading reconnect loop.
-      if (isAutoplayBlockedError(error)) {
+      // Only show the autoplay message for a background/automatic attempt.
+      // If the user just pressed Play and the browser still rejects playback,
+      // treat it as a real connection failure instead of sending the user in
+      // a "Ready to play" loop.
+      if (isAutoplayBlockedError(error) && !fromUserGesture) {
         autoplayBlockedRef.current = true;
         setAutoplayBlocked(true);
         setStreamOffline(false);
         clearRetryTimers();
       } else {
+        autoplayBlockedRef.current = false;
+        setAutoplayBlocked(false);
         setStreamOffline(true);
-        // Three seconds keeps the first connection feeling direct while still
-        // allowing the station provider time to become ready.
         startRetryCountdown(3, () => attemptPlay(true));
       }
     } finally {
