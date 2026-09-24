@@ -275,46 +275,18 @@ export default function Home() {
     audio: HTMLAudioElement,
     forceFresh = false,
   ) => {
-    // The server warms the current RadioStream321 mount before the user taps
-    // Play. Use that URL directly so audio.play() stays attached to the real
-    // user gesture with no fetch/await in between.
-    if (!forceFresh && streamUrlRef.current) {
-      const separator = streamUrlRef.current.includes("?") ? "&" : "?";
-      audio.src = `${streamUrlRef.current}${separator}_t=${Date.now()}`;
-      audio.load();
-      await audio.play();
-      return;
-    }
-
-    // Reconnects use the same-origin proxy, which forces a fresh provider
-    // discovery on the server when the rotating mount has changed.
+    // Always play through our server proxy. The provider mount can rotate and
+    // may be HTTP or require provider headers/cookies; sending that URL to the
+    // browser can result in a "playing" element with no audible audio.
+    // /api/stream handles discovery and proxies the actual live MP3 bytes.
+    audio.pause();
+    audio.muted = false;
+    audio.volume = Math.max(volume, 0.8);
+    if (volume < 0.8) setVolume(Math.max(volume, 0.8));
     audio.src = `${STREAM_ENDPOINT}?_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
     audio.load();
     await audio.play();
-  }, []);
-
-  const loadStreamUrl = useCallback(async (forceFresh = false) => {
-    if (!forceFresh && streamUrlRef.current) return streamUrlRef.current;
-    if (streamUrlRequestRef.current) return streamUrlRequestRef.current;
-
-    const request = fetch(`/api/stream-url${forceFresh ? "?fresh=1" : ""}`, {
-      cache: "no-store",
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error("Stream URL unavailable");
-        const data = await res.json() as { url?: string };
-        if (!data.url) throw new Error("Stream URL missing");
-        streamUrlRef.current = data.url;
-        return data.url;
-      })
-      .finally(() => {
-        streamUrlRequestRef.current = null;
-      });
-
-    streamUrlRequestRef.current = request;
-    return request;
-  }, []);
-
+  }, [volume]);
   const attemptPlay = useCallback(async (isRetry = false, fromUserGesture = false) => {
     const audio = audioRef.current;
     if (!audio || playAttemptRef.current) return;
