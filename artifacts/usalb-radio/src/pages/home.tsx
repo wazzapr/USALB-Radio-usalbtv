@@ -661,14 +661,14 @@ export default function Home() {
             {/* Station logo — the circular USALB Radio mark from the station branding */}
             <div className="mb-12 flex justify-center">
               <div
-                className="relative flex h-44 w-44 items-center justify-center overflow-hidden rounded-full border border-red-500/40 bg-black/80 p-2 shadow-[0_0_45px_-10px_rgba(220,38,38,0.45)] sm:h-52 sm:w-52"
+                className="relative flex h-48 w-48 items-center justify-center overflow-hidden rounded-full border border-red-500/40 bg-black/80 shadow-[0_0_45px_-10px_rgba(220,38,38,0.45)] sm:h-56 sm:w-56"
                 data-testid="station-logo-frame"
               >
                 <div className="absolute inset-0 rounded-full border border-white/10" />
                 <img
                   src={logoSrc}
                   alt="USALB RADIO"
-                  className="relative h-full w-full rounded-full object-contain"
+                  className="relative h-full w-full rounded-full object-cover scale-[1.08]"
                   data-testid="img-logo"
                 />
               </div>
