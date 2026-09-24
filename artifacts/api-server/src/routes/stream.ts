@@ -46,19 +46,34 @@ function extractStreamUrl(html: string): string | null {
   addCandidates(/(?:src|href)\s*=\s*["']([^"']+)["']/gi);
 
   const providerPattern =
-    /(?:listen2myradio|listen2myshow|radio12345|radiostream123)\.com/i;
+    /(?:listen2myradio|listen2myshow|radio12345|radiostream123)\\.com/i;
 
-  for (const raw of candidates) {
+  // Prefer the actual live audio mount over generic provider/profile links.
+  // RadioStream321 pages commonly expose the mount as /live.mp3?typeportmount=... .
+  const rankedCandidates = [...candidates].sort((a, b) => {
+    const score = (value: string) => {
+      let points = 0;
+      if (/\\/live\\.mp3(?:[?]|$)/i.test(value)) points += 100;
+      if (/\\.(?:mp3|aac|ogg)(?:[?]|$)/i.test(value)) points += 80;
+      if (/typeportmount=/i.test(value)) points += 60;
+      if (/\\/intro\\.mp3(?:[?]|$)/i.test(value)) points += 40;
+      if (/listen2myradio|listen2myshow|radio12345|radiostream123/i.test(value)) points += 10;
+      return points;
+    };
+    return score(b) - score(a);
+  });
+
+  for (const raw of rankedCandidates) {
     const value = raw
       .replace(/&amp;/gi, "&")
-      .replace(/[),;'"]+$/, "");
+      .replace(/[),;'\"]+$/, "");
 
     try {
       const url = new URL(value, RADIO_PAGE);
       if (
         (url.protocol === "http:" || url.protocol === "https:")
         && providerPattern.test(url.hostname)
-        && !/radiostream321\.com$/i.test(url.hostname)
+        && !/radiostream321\\.com$/i.test(url.hostname)
       ) {
         return url.toString();
       }
