@@ -148,25 +148,6 @@ async function fetchReadyProviderStream(): Promise<Response> {
 
   for (let attempt = 0; attempt < PROVIDER_RETRIES; attempt += 1) {
     try {
-        const fallback = await fetchWithHeaderTimeout(FALLBACK_URL, {
-          headers: providerHeaders(),
-          redirect: "follow",
-          cache: "no-store",
-        }, 8000);
-
-        if (isAudioResponse(fallback)) {
-          cachedUrl = FALLBACK_URL;
-          cacheExpiry = Date.now() + CACHE_TTL_MS;
-          return fallback;
-        }
-
-        await fallback.body?.cancel();
-      } catch (fallbackError) {
-        lastError = fallbackError;
-      }
-    }
-
-    try {
       // Rediscover after a failed known mount. Listen2MyRadio can rotate the
       // mount while the station is waking up.
       const url = await fetchStreamUrl(true);
