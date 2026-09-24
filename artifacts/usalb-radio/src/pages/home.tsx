@@ -283,20 +283,22 @@ export default function Home() {
     audio: HTMLAudioElement,
     forceFresh = false,
   ) => {
-    // Normal browsers use the exact live MP3 URL discovered by the old
-    // working project. In-app browsers use the same-origin relay so Messenger
-    // and similar webviews never contact RadioStream321 directly.
+    // Use the same direct live-MP3 playback path that is proven to work on
+    // Safari, the Home Screen app, desktop browsers, and the old listener.
+    // Most importantly, when the current URL was warmed in advance, do not
+    // await a network request after the user taps Play: iOS/Messenger can
+    // otherwise lose the user-activation permission required by audio.play().
     audio.pause();
     audio.muted = false;
     audio.volume = Math.max(volume, 0.8);
     if (volume < 0.8) setVolume(Math.max(volume, 0.8));
 
-    if (!isInAppBrowser) {
-      const liveUrl = await loadLiveStreamUrl(forceFresh);
-      audio.src = liveUrl;
-    } else {
-      audio.src = `${STREAM_ENDPOINT}?_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
-    }
+    const liveUrl = !forceFresh && streamUrlRef.current
+      ? streamUrlRef.current
+      : await loadLiveStreamUrl(forceFresh);
+
+    audio.src = liveUrl;
+    audio.load();
     await audio.play();
   }, [volume, loadLiveStreamUrl]);
 
