@@ -332,13 +332,7 @@ export default function Home() {
       playAttemptRef.current = false;
       setIsLoading(false);
     }
-  }, [clearRetryTimers, startRetryCountdown, removePrimerIframe, loadStreamUrl, playThroughStreamEndpoint]);
-
-  // Resolve the rotating station URL ahead of time so a later user tap can
-  // start playback synchronously without waiting for fetch().
-  useEffect(() => {
-    void loadStreamUrl().catch(() => undefined);
-  }, [loadStreamUrl]);
+  }, [clearRetryTimers, startRetryCountdown, removePrimerIframe, playThroughStreamEndpoint]);
 
   // Media Session keeps Android Chrome's lock-screen notification and headset
   // controls connected to the live player while the page is in the background.
