@@ -216,7 +216,7 @@ async function fetchReadyProviderStream(): Promise<Response> {
       const validated = await validateAudioResponse(upstream);
       cachedUrl = url;
       cacheExpiry = Date.now() + CACHE_TTL_MS;
-      return validated.response;
+      return validated;
     } catch (error) {
       clearProviderCache();
       lastError = error;
