@@ -46,7 +46,6 @@ export default function Home() {
   const shareRef = useRef<HTMLDivElement>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const primerIframeRef = useRef<HTMLIFrameElement | null>(null);
   const playAttemptRef = useRef(false);
   const streamOfflineRef = useRef(false);
   const hasPlayedOnceRef = useRef(false);
@@ -55,10 +54,6 @@ export default function Home() {
   const autoRecoveringRef = useRef(false);
   useEffect(() => { streamOfflineRef.current = streamOffline; }, [streamOffline]);
 
-  // Use a ref for the stream URL so updating it NEVER causes a re-render
-  // or audio interruption. The audio element src is set imperatively.
-  const streamUrlRef = useRef("");
-  const streamUrlRequestRef = useRef<Promise<string> | null>(null);
   const isPlayingRef = useRef(false);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
 
@@ -80,66 +75,25 @@ export default function Home() {
     };
   }, []);
 
-  // RadioStream321 needs the station page to be visited briefly before
-  // its live stream will accept a new listener. Do that silently in a
-  // short-lived iframe as soon as USALB opens. The iframe is denied autoplay
-  // and is removed after the provider has had time to initialize, so it can
-  // never become a second audible player.
-  useEffect(() => {
-    const iframe = document.createElement("iframe");
-    iframe.src = "https://usalbradio.radiostream321.com/";
-    iframe.title = "USALB radio connection warm-up";
-    iframe.setAttribute("aria-hidden", "true");
-    iframe.setAttribute("allow", "autoplay 'none'");
-    iframe.tabIndex = -1;
-    iframe.loading = "eager";
-    iframe.style.position = "fixed";
-    iframe.style.width = "1px";
-    iframe.style.height = "1px";
-    iframe.style.left = "-20px";
-    iframe.style.top = "-20px";
-    iframe.style.opacity = "0";
-    iframe.style.pointerEvents = "none";
-    iframe.style.border = "0";
-    document.body.appendChild(iframe);
-
-    const removeWarmup = window.setTimeout(() => {
-      iframe.src = "about:blank";
-      iframe.remove();
-    }, 1500);
-
-    return () => {
-      window.clearTimeout(removeWarmup);
-      iframe.src = "about:blank";
-      iframe.remove();
-    };
-  }, []);
-
-  // Wake the API and resolve the current provider mount as soon as the
-  // listener opens USALB. This is important after a Replit cold start: the
-  // first visitor should trigger the server-side resolver automatically
-  // instead of having to open RadioStream321 manually.
+  // Warm the station silently through our API. The API reproduces the
+  // provider's listener-address confirmation server-side; loading the full
+  // RadioStream321 page in an iframe can escape the frame on some devices.
   useEffect(() => {
     let cancelled = false;
 
-    const warmServer = async () => {
+    const warmStation = async () => {
       try {
-        const response = await fetch("/api/stream-url?fresh=1", {
+        const response = await fetch("/api/stream-warmup", {
           cache: "no-store",
-          headers: { Accept: "application/json" },
         });
-        if (!response.ok || cancelled) return;
-        const data = await response.json() as { url?: string };
-        if (data.url && !cancelled) {
-          streamUrlRef.current = data.url;
-        }
+        if (!response.ok) throw new Error("Radio warm-up failed");
       } catch {
         // Playback will retry through /api/stream when the user presses Play.
       }
     };
 
-    void warmServer();
-    const retry = window.setTimeout(() => void warmServer(), 4000);
+    void warmStation();
+    const retry = window.setTimeout(() => void warmStation(), 4000);
 
     return () => {
       cancelled = true;
@@ -298,44 +252,23 @@ export default function Home() {
     retryTimerRef.current = setTimeout(onRetry, seconds * 1000);
   }, [clearRetryTimers]);
 
-  const removePrimerIframe = useCallback(() => {
-    if (primerIframeRef.current) {
-      primerIframeRef.current.src = "about:blank";
-      primerIframeRef.current.remove();
-      primerIframeRef.current = null;
-    }
-  }, []);
-
-  const loadLiveStreamUrl = useCallback(async (forceFresh = false) => {
-    const response = await fetch(forceFresh ? "/api/stream-url?fresh=1" : "/api/stream-url", { cache: "no-store" });
-    if (!response.ok) throw new Error("Live stream URL unavailable");
-    const data = await response.json() as { url?: string };
-    if (!data.url) throw new Error("Live stream URL missing");
-    return data.url;
-  }, []);
-
-  const playThroughStreamEndpoint = useCallback(async (
+  const playThroughStreamEndpoint = useCallback((
     audio: HTMLAudioElement,
     forceFresh = false,
-  ) => {
-    // Use the same direct live-MP3 playback path that is proven to work on
-    // Safari, the Home Screen app, desktop browsers, and the old listener.
-    // Most importantly, when the current URL was warmed in advance, do not
-    // await a network request after the user taps Play: iOS/Messenger can
-    // otherwise lose the user-activation permission required by audio.play().
+  ): Promise<void> => {
+    // Start the same-origin player immediately from the Play gesture. The
+    // server resolves the rotating Listen2MyRadio mount and confirms the
+    // listener before it relays any audio, so no URL fetch can consume the
+    // browser's user-activation window.
     audio.pause();
     audio.muted = false;
     audio.volume = Math.max(volume, 0.8);
     if (volume < 0.8) setVolume(Math.max(volume, 0.8));
 
-    const liveUrl = !forceFresh && streamUrlRef.current
-      ? streamUrlRef.current
-      : await loadLiveStreamUrl(forceFresh);
-
-    audio.src = liveUrl;
+    audio.src = `${STREAM_ENDPOINT}?_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
     audio.load();
-    await audio.play();
-  }, [volume, loadLiveStreamUrl]);
+    return audio.play();
+  }, [volume]);
 
   const attemptPlay = useCallback(async (isRetry = false, fromUserGesture = false) => {
     const audio = audioRef.current;
@@ -344,12 +277,8 @@ export default function Home() {
     playAttemptRef.current = true;
     setIsLoading(true);
     try {
-      // If this came from a tap, start the audio element before awaiting any
-      // network work. Mobile Safari and some Android webviews otherwise lose
-      // the user-gesture permission required by audio.play().
-      // There is exactly one playback path: the real USALB audio element
-      // using the current provider stream URL. The RadioStream321 warm-up
-      // above is silent and temporary; it never owns playback.
+      // Playback begins synchronously from the user's gesture; the stream
+      // lookup and station handshake continue behind the same-origin URL.
       await playThroughStreamEndpoint(audio, isRetry);
       setIsPlaying(true);
       hasPlayedOnceRef.current = true;
@@ -358,18 +287,17 @@ export default function Home() {
       setAutoplayBlocked(false);
       clearRetryTimers();
     } catch (error) {
-      // A stale provider URL should be discarded so the next tap/retry gets a
-      // fresh stream address rather than replaying the same failed URL.
-      if (!isAutoplayBlockedError(error)) {
-        streamUrlRef.current = "";
-      }
-      removePrimerIframe();
       setIsPlaying(false);
       // Only show the autoplay message for a background/automatic attempt.
       // If the user just pressed Play and the browser still rejects playback,
       // treat it as a real connection failure instead of sending the user in
       // a "Ready to play" loop.
-      if (isAutoplayBlockedError(error) && !fromUserGesture) {
+      if (
+        isAutoplayBlockedError(error)
+        && !fromUserGesture
+        && !streamOfflineRef.current
+        && !hasPlayedOnceRef.current
+      ) {
         autoplayBlockedRef.current = true;
         setAutoplayBlocked(true);
         setStreamOffline(false);
@@ -384,7 +312,7 @@ export default function Home() {
       playAttemptRef.current = false;
       setIsLoading(false);
     }
-  }, [clearRetryTimers, startRetryCountdown, removePrimerIframe, playThroughStreamEndpoint]);
+  }, [clearRetryTimers, startRetryCountdown, playThroughStreamEndpoint]);
 
   // Media Session keeps Android Chrome's lock-screen notification and headset
   // controls connected to the live player while the page is in the background.
@@ -430,7 +358,6 @@ export default function Home() {
       setIsPlaying(false);
       clearRetryTimers();
       setStreamOffline(false);
-      removePrimerIframe();
     } else {
       userStoppedRef.current = false;
       autoplayBlockedRef.current = false;
@@ -498,7 +425,6 @@ export default function Home() {
         }
 
         audio.pause();
-        streamUrlRef.current = "";
         void attemptPlay(true);
       }, 1500);
     };
