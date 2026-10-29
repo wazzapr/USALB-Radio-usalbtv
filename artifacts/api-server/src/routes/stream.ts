@@ -1,132 +1,76 @@
 import { Router } from "express";
 import { Readable } from "node:stream";
+import {
+  fetchStreamTarget,
+  openFreshRadioAudio,
+  wakeRadioStation,
+} from "../lib/radio-provider";
+import {
+  ensureRadioHlsRunning,
+  getRadioHlsFilePath,
+  waitForRadioHlsPlaylist,
+} from "../lib/radio-hls";
 
 const streamRouter = Router();
 
-const RADIO_PAGE = "https://usalbradio.radiostream321.com/";
-const RADIO_ID = "3409298";
-const RADIO_ORIGIN = new URL(RADIO_PAGE).origin;
-const BROWSER_USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+// HLS gives each listener short playlist/segment requests instead of one live
+// HTTP request that the hosting proxy terminates after five minutes.
+streamRouter.get("/radio-hls/:filename", async (req, res): Promise<void> => {
+  const rawFilename = req.params.filename;
+  const filename = Array.isArray(rawFilename) ? rawFilename[0] : rawFilename;
+  const filePath = getRadioHlsFilePath(filename);
+  if (!filePath) {
+    res.status(404).end();
+    return;
+  }
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  ensureRadioHlsRunning();
+  if (filename === "playlist.m3u8" && !(await waitForRadioHlsPlaylist())) {
+    res.setHeader("Retry-After", "2");
+    res.status(503).json({ error: "Live radio is starting" });
+    return;
+  }
 
-async function fetchStreamTarget(): Promise<{ url: string; cookie?: string }> {
-  const res = await fetch(RADIO_PAGE, {
-    headers: {
-      "User-Agent": BROWSER_USER_AGENT,
-      "Accept": "text/html,application/xhtml+xml",
-    },
-    signal: AbortSignal.timeout(8000),
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.type(filename.endsWith(".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp2t");
+  res.sendFile(filePath, (error) => {
+    if (error && !res.headersSent) res.status(404).end();
   });
+});
 
-  if (!res.ok) throw new Error(`Radio page returned ${res.status}`);
-  const html = await res.text();
-
-  // The stream URL appears in the page source as plain text inside a hidden div
-  const match = html.match(/https?:\/\/[^\s"<>]+\.mp3[^\s"<>]*/i)
-    ?? html.match(/https?:\/\/[^\s"<>]+listen2myradio[^\s"<>]*/i);
-
-  if (match) {
-    return {
-      url: match[0].replace(/&amp;/g, "&"),
-      cookie: res.headers.get("set-cookie")?.split(";")[0],
-    };
-  }
-
-  throw new Error("Stream URL not found in page source");
-}
-
-async function wakeRadioStation(cookie?: string): Promise<void> {
-  // The official player makes this POST on page load to confirm the listener
-  // address with Listen2MyRadio. Reproduce only that lightweight request on
-  // the server; never navigate the listener's browser to the provider page.
-  const response = await fetch(
-    new URL(`openfire.ajax.php?radio_id=${RADIO_ID}`, RADIO_PAGE),
-    {
-      method: "POST",
-      headers: {
-        "User-Agent": BROWSER_USER_AGENT,
-        "Accept": "text/html, */*; q=0.01",
-        "Referer": RADIO_PAGE,
-        "Origin": RADIO_ORIGIN,
-        "X-Requested-With": "XMLHttpRequest",
-        ...(cookie ? { Cookie: cookie } : {}),
-      },
-      signal: AbortSignal.timeout(8000),
-    },
-  );
-
-  await response.arrayBuffer();
-  if (!response.ok) throw new Error(`Radio warm-up returned ${response.status}`);
-}
-
-// Relay the live stream through our origin. This avoids browser CORS/referrer
-// differences and lets the provider see the same page context as its player.
+// Legacy continuous MP3 endpoint retained for compatibility and diagnostics.
 streamRouter.get("/stream", async (req, res) => {
-  let upstream: Response | null = null;
-  let lastError: unknown;
-
-  // The provider rotates the mount and may take a moment to accept the
-  // listener after its official IP-confirmation request.
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    try {
-      const target = await fetchStreamTarget();
-      await wakeRadioStation(target.cookie);
-
-      // Time out only while waiting for response headers. Once audio headers
-      // arrive, leave the controller alone so the live stream can continue.
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
-      let candidate: Response;
-      try {
-        candidate = await fetch(target.url, {
-          headers: {
-            "User-Agent": BROWSER_USER_AGENT,
-            "Referer": RADIO_PAGE,
-            "Accept": "audio/mpeg,audio/*;q=0.9,*/*;q=0.5",
-            ...(target.cookie ? { Cookie: target.cookie } : {}),
-          },
-          redirect: "follow",
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
-
-      const contentType = candidate.headers.get("content-type") ?? "";
-      if (candidate.ok && candidate.body && contentType.toLowerCase().startsWith("audio/")) {
-        upstream = candidate;
-        break;
-      }
-
-      await candidate.body?.cancel();
-      lastError = new Error("Radio provider did not return audio");
-    } catch (err) {
-      lastError = err;
-    }
-
-    if (attempt < 3) await wait(1000);
-  }
-
-  if (!upstream?.body) {
-    req.log.warn({ err: lastError }, "Radio stream is not returning audio");
+  let audioConnection: Awaited<ReturnType<typeof openFreshRadioAudio>> | null = null;
+  try {
+    audioConnection = await openFreshRadioAudio();
+  } catch (err) {
+    req.log.warn({ err }, "Radio stream is not returning audio");
     res.status(502).json({ error: "Radio stream is unavailable" });
     return;
   }
 
+  const controller = audioConnection.controller;
+  const clientDisconnected = () => controller.abort();
+  req.once("aborted", clientDisconnected);
+  res.once("close", () => {
+    if (!res.writableEnded) clientDisconnected();
+  });
+
   res.status(200);
-  res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "audio/mpeg");
+  res.setHeader("Content-Type", audioConnection.response.headers.get("content-type") ?? "audio/mpeg");
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   res.setHeader("Accept-Ranges", "none");
-  Readable.fromWeb(upstream.body as ReadableStream<Uint8Array>).pipe(res);
+  if (audioConnection.response.body) {
+    Readable.fromWeb(audioConnection.response.body as ReadableStream<Uint8Array>).pipe(res);
+  }
 });
 
 streamRouter.get("/stream-warmup", async (req, res) => {
   try {
-    const target = await fetchStreamTarget();
-    await wakeRadioStation(target.cookie);
+    ensureRadioHlsRunning();
+    if (!(await waitForRadioHlsPlaylist())) {
+      throw new Error("Timed out waiting for the live radio segments");
+    }
     res.json({ ready: true });
   } catch (err) {
     req.log.warn({ err }, "Unable to warm the radio station");

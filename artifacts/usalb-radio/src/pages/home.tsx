@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Play, Pause, Volume2, VolumeX, Radio, Copy, Check, Share2, RefreshCw, WifiOff, Download, X, ArrowUp } from "lucide-react";
+import Hls from "hls.js";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { SiFacebook, SiWhatsapp, SiX, SiMessenger } from "react-icons/si";
@@ -13,6 +14,7 @@ const isInAppBrowser = /FBAN|FBAV|FBIOS|FB_IAB|Instagram|Messenger|TikTok|musica
 const isStandaloneDisplay = window.matchMedia("(display-mode: standalone)").matches
   || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
 const STREAM_ENDPOINT = "/api/stream";
+const HLS_STREAM_ENDPOINT = "/api/radio-hls/playlist.m3u8";
 const PUBLIC_APP_URL = "https://usalb-radio-usalbtv--applauncher2.replit.app/";
 
 const isAutoplayBlockedError = (error: unknown) => {
@@ -33,6 +35,10 @@ export default function Home() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
+  const volumeRef = useRef(volume);
+  const mutedRef = useRef(isMuted);
+  volumeRef.current = volume;
+  mutedRef.current = isMuted;
   const [isLoading, setIsLoading] = useState(false);
   const [streamOffline, setStreamOffline] = useState(false);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
@@ -52,6 +58,9 @@ export default function Home() {
   const autoplayBlockedRef = useRef(false);
   const userStoppedRef = useRef(false);
   const autoRecoveringRef = useRef(false);
+  const hlsRef = useRef<Hls | null>(null);
+  const hlsNativeRef = useRef(false);
+  const hlsSourceLoadedRef = useRef(false);
   useEffect(() => { streamOfflineRef.current = streamOffline; }, [streamOffline]);
 
   const isPlayingRef = useRef(false);
@@ -72,6 +81,65 @@ export default function Home() {
     return () => {
       window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
       window.removeEventListener("appinstalled", handleInstalled);
+    };
+  }, []);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    // Safari and iOS can play HLS directly; other supported browsers use hls.js.
+    if (audio.canPlayType("application/vnd.apple.mpegurl")) {
+      hlsNativeRef.current = true;
+      audio.src = HLS_STREAM_ENDPOINT;
+      return () => {
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+        hlsNativeRef.current = false;
+      };
+    }
+
+    if (!Hls.isSupported()) return;
+
+    const hls = new Hls({
+      autoStartLoad: false,
+      enableWorker: true,
+      lowLatencyMode: true,
+      liveSyncDurationCount: 3,
+      liveMaxLatencyDurationCount: 7,
+      maxLiveSyncPlaybackRate: 1.05,
+      backBufferLength: 30,
+    });
+    let hlsRetryTimer: number | null = null;
+    hlsRef.current = hls;
+    hls.attachMedia(audio);
+    hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+      hlsSourceLoadedRef.current = true;
+      hls.loadSource(HLS_STREAM_ENDPOINT);
+    });
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal) return;
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        hls.recoverMediaError();
+        return;
+      }
+      if (userStoppedRef.current || hlsRetryTimer) return;
+
+      autoRecoveringRef.current = true;
+      setStreamOffline(true);
+      setIsLoading(true);
+      hlsRetryTimer = window.setTimeout(() => {
+        hlsRetryTimer = null;
+        if (!userStoppedRef.current) hls.startLoad(-1);
+      }, 1500);
+    });
+
+    return () => {
+      if (hlsRetryTimer !== null) window.clearTimeout(hlsRetryTimer);
+      hls.destroy();
+      hlsRef.current = null;
+      hlsSourceLoadedRef.current = false;
     };
   }, []);
 
@@ -256,19 +324,39 @@ export default function Home() {
     audio: HTMLAudioElement,
     forceFresh = false,
   ): Promise<void> => {
-    // Start the same-origin player immediately from the Play gesture. The
-    // server resolves the rotating Listen2MyRadio mount and confirms the
-    // listener before it relays any audio, so no URL fetch can consume the
-    // browser's user-activation window.
-    audio.pause();
-    audio.muted = false;
-    audio.volume = Math.max(volume, 0.8);
-    if (volume < 0.8) setVolume(Math.max(volume, 0.8));
+    // HLS divides live audio into short requests rather than keeping a single
+    // browser connection open for the hosting proxy's five-minute limit.
+    audio.muted = mutedRef.current;
+    audio.volume = volumeRef.current;
 
+    const hls = hlsRef.current;
+    if (hls) {
+      if (forceFresh) {
+        hls.stopLoad();
+        hls.loadSource(HLS_STREAM_ENDPOINT);
+        hlsSourceLoadedRef.current = true;
+      } else if (!hlsSourceLoadedRef.current) {
+        hls.loadSource(HLS_STREAM_ENDPOINT);
+        hlsSourceLoadedRef.current = true;
+      }
+      hls.startLoad(-1);
+      return audio.play();
+    }
+
+    if (hlsNativeRef.current) {
+      if (forceFresh) {
+        audio.src = `${HLS_STREAM_ENDPOINT}?_t=${Date.now()}`;
+        audio.load();
+      }
+      return audio.play();
+    }
+
+    // Fallback for older browsers without HLS support.
+    audio.pause();
     audio.src = `${STREAM_ENDPOINT}?_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
     audio.load();
     return audio.play();
-  }, [volume]);
+  }, []);
 
   const attemptPlay = useCallback(async (isRetry = false, fromUserGesture = false) => {
     const audio = audioRef.current;
@@ -335,6 +423,7 @@ export default function Home() {
     };
     const pauseFromMediaSession = () => {
       audioRef.current?.pause();
+      hlsRef.current?.stopLoad();
       setIsPlaying(false);
       clearRetryTimers();
     };
@@ -355,6 +444,7 @@ export default function Home() {
       userStoppedRef.current = true;
       autoRecoveringRef.current = false;
       audioRef.current?.pause();
+      hlsRef.current?.stopLoad();
       setIsPlaying(false);
       clearRetryTimers();
       setStreamOffline(false);
@@ -410,13 +500,10 @@ export default function Home() {
 
     let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const scheduleRecovery = () => {
+    const scheduleRecovery = (delayMs: number) => {
       if (!hasPlayedOnceRef.current || userStoppedRef.current || recoveryTimer) return;
 
       autoRecoveringRef.current = true;
-      setStreamOffline(true);
-      setIsLoading(true);
-
       recoveryTimer = setTimeout(() => {
         recoveryTimer = null;
         if (userStoppedRef.current || !hasPlayedOnceRef.current) {
@@ -424,40 +511,53 @@ export default function Home() {
           return;
         }
 
-        audio.pause();
+        setStreamOffline(true);
+        setIsLoading(true);
         void attemptPlay(true);
-      }, 1500);
+      }, delayMs);
     };
 
-    const handleFailure = () => scheduleRecovery();
+    const handleError = () => scheduleRecovery(1000);
+    const handleEnded = () => scheduleRecovery(1000);
+    const handleStalled = () => scheduleRecovery(10000);
+    const handleWaiting = () => {
+      // Brief buffering is normal on mobile. Keep the active HLS session and
+      // only restart if the browser remains without enough data for 12 seconds.
+      if (audio.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+        scheduleRecovery(12000);
+      }
+    };
 
     const handlePlaying = () => {
-      if (autoRecoveringRef.current) {
-        autoRecoveringRef.current = false;
-        setStreamOffline(false);
-        setIsLoading(false);
-      }
+      if (userStoppedRef.current && audio.paused) return;
+      autoRecoveringRef.current = false;
+      hasPlayedOnceRef.current = true;
+      setIsPlaying(true);
+      setStreamOffline(false);
+      setIsLoading(false);
+      setAutoplayBlocked(false);
       if (recoveryTimer) {
         clearTimeout(recoveryTimer);
         recoveryTimer = null;
       }
+      clearRetryTimers();
     };
 
-    audio.addEventListener("error", handleFailure);
-    audio.addEventListener("ended", handleFailure);
-    audio.addEventListener("stalled", handleFailure);
-    audio.addEventListener("waiting", handleFailure);
+    audio.addEventListener("error", handleError);
+    audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("stalled", handleStalled);
+    audio.addEventListener("waiting", handleWaiting);
     audio.addEventListener("playing", handlePlaying);
 
     return () => {
       if (recoveryTimer) clearTimeout(recoveryTimer);
-      audio.removeEventListener("error", handleFailure);
-      audio.removeEventListener("ended", handleFailure);
-      audio.removeEventListener("stalled", handleFailure);
-      audio.removeEventListener("waiting", handleFailure);
+      audio.removeEventListener("error", handleError);
+      audio.removeEventListener("ended", handleEnded);
+      audio.removeEventListener("stalled", handleStalled);
+      audio.removeEventListener("waiting", handleWaiting);
       audio.removeEventListener("playing", handlePlaying);
     };
-  }, [attemptPlay]);
+  }, [attemptPlay, clearRetryTimers]);
 
   // Reconnect automatically when the user returns to this tab while offline
   useEffect(() => {

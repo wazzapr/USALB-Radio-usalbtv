@@ -20,3 +20,9 @@ The official Listen2MyRadio player confirms the station listener by POSTing to `
 **Why:** The provider's wake-up step prepares the stream, but the hidden page is not safe to embed as an invisible warm-up.
 
 **How to apply:** Fetch the official page, preserve its session cookie, call the small wake-up endpoint server-side, then proxy the MP3 through the app's own origin.
+
+On this app's deployment, a single proxied live MP3 response is terminated after about five minutes even when the provider is still sending audio.
+
+**Why:** Deployment logs showed repeated `/api/stream` requests aborted at roughly 300 seconds, which caused audible dropouts and reconnects independent of the station's state.
+
+**How to apply:** For long-running listening, deliver short HLS playlist/segment requests and let a server-side relay refresh the upstream audio; do not rely on one endless browser HTTP response.
