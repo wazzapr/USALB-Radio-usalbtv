@@ -318,21 +318,16 @@ export default function Home() {
     audio: HTMLAudioElement,
     forceFresh = false,
   ) => {
-    // Use the same direct live-MP3 playback path that is proven to work on
-    // Safari, the Home Screen app, desktop browsers, and the old listener.
-    // Most importantly, when the current URL was warmed in advance, do not
-    // await a network request after the user taps Play: iOS/Messenger can
-    // otherwise lose the user-activation permission required by audio.play().
+    // Always play through our same-origin relay. The relay resolves the
+    // provider URL on the server, so listeners never depend on a possibly
+    // rotating RadioStream321 URL or need to open the provider page themselves.
+    // Keep the silent provider warm-up above; it is not an audio player.
     audio.pause();
     audio.muted = false;
     audio.volume = Math.max(volume, 0.8);
     if (volume < 0.8) setVolume(Math.max(volume, 0.8));
 
-    const liveUrl = !forceFresh && streamUrlRef.current
-      ? streamUrlRef.current
-      : await loadLiveStreamUrl(forceFresh);
-
-    audio.src = liveUrl;
+    audio.src = `${STREAM_ENDPOINT}?_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
     audio.load();
     await audio.play();
   }, [volume, loadLiveStreamUrl]);
@@ -483,8 +478,13 @@ export default function Home() {
 
     let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const scheduleRecovery = () => {
-      if (!hasPlayedOnceRef.current || userStoppedRef.current || recoveryTimer) return;
+    const scheduleRecovery = (delayMs = 1500, replaceExisting = false) => {
+      if (!hasPlayedOnceRef.current || userStoppedRef.current) return;
+      if (recoveryTimer) {
+        if (!replaceExisting) return;
+        clearTimeout(recoveryTimer);
+        recoveryTimer = null;
+      }
 
       autoRecoveringRef.current = true;
       setStreamOffline(true);
@@ -500,10 +500,13 @@ export default function Home() {
         audio.pause();
         streamUrlRef.current = "";
         void attemptPlay(true);
-      }, 1500);
+      }, delayMs);
     };
 
-    const handleFailure = () => scheduleRecovery();
+    // Hard media failures recover quickly. Temporary buffering gets a grace
+    // period so a short provider/network pause does not restart the player.
+    const handleFailure = () => scheduleRecovery(1500, true);
+    const handleStall = () => scheduleRecovery(20000);
 
     const handlePlaying = () => {
       if (autoRecoveringRef.current) {
@@ -519,16 +522,16 @@ export default function Home() {
 
     audio.addEventListener("error", handleFailure);
     audio.addEventListener("ended", handleFailure);
-    audio.addEventListener("stalled", handleFailure);
-    audio.addEventListener("waiting", handleFailure);
+    audio.addEventListener("stalled", handleStall);
+    audio.addEventListener("waiting", handleStall);
     audio.addEventListener("playing", handlePlaying);
 
     return () => {
       if (recoveryTimer) clearTimeout(recoveryTimer);
       audio.removeEventListener("error", handleFailure);
       audio.removeEventListener("ended", handleFailure);
-      audio.removeEventListener("stalled", handleFailure);
-      audio.removeEventListener("waiting", handleFailure);
+      audio.removeEventListener("stalled", handleStall);
+      audio.removeEventListener("waiting", handleStall);
       audio.removeEventListener("playing", handlePlaying);
     };
   }, [attemptPlay]);
