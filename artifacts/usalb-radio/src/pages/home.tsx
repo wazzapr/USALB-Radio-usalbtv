@@ -34,6 +34,9 @@ export default function Home() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
+  const providerFrameRef = useRef<HTMLIFrameElement>(null);
+  const providerFrameCloseTimerRef = useRef<number | null>(null);
+  const providerFrameClosedRef = useRef(false);
   const volumeRef = useRef(volume);
   const mutedRef = useRef(isMuted);
   volumeRef.current = volume;
@@ -61,6 +64,23 @@ export default function Home() {
 
   const isPlayingRef = useRef(false);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+
+  const handleProviderFrameLoad = () => {
+    if (providerFrameClosedRef.current) return;
+    providerFrameClosedRef.current = true;
+    providerFrameCloseTimerRef.current = window.setTimeout(() => {
+      const frame = providerFrameRef.current;
+      if (frame) {
+        frame.src = "about:blank";
+      }
+    }, 1200);
+  };
+
+  useEffect(() => () => {
+    if (providerFrameCloseTimerRef.current !== null) {
+      window.clearTimeout(providerFrameCloseTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event: Event) => {
@@ -824,6 +844,7 @@ export default function Home() {
         playsInline
       />
       <iframe
+        ref={providerFrameRef}
         src={PROVIDER_PAGE}
         title="Background station connection"
         sandbox="allow-scripts allow-same-origin allow-forms"
@@ -831,6 +852,7 @@ export default function Home() {
         loading="eager"
         aria-hidden="true"
         tabIndex={-1}
+        onLoad={handleProviderFrameLoad}
         className="fixed left-0 top-0 -z-10 h-px w-px overflow-hidden border-0 opacity-0 pointer-events-none"
       />
     </div>
