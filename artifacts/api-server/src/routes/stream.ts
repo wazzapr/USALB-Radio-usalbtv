@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { Readable } from "node:stream";
 
 const streamRouter = Router();
 
@@ -35,110 +36,47 @@ async function fetchStreamTarget(): Promise<{ url: string; cookie?: string }> {
   throw new Error("Stream URL not found in page source");
 }
 
-// Relay the live stream through our origin. The browser keeps one stable
-// /api/stream URL while this handler refreshes the provider URL whenever an
-// upstream connection ends. That hides rotating provider URLs from listeners.
+// Relay the live stream through our origin. This avoids browser CORS/referrer
+// differences and lets the provider see the same page context as its player.
 streamRouter.get("/stream", async (req, res) => {
-  let clientDisconnected = false;
-  let headersSent = false;
-  let upstreamAbort: AbortController | null = null;
-
-  res.on("close", () => {
-    clientDisconnected = true;
-    upstreamAbort?.abort();
-  });
-
   try {
-    while (!clientDisconnected && !res.destroyed) {
-      let target: { url: string; cookie?: string };
+    const target = await fetchStreamTarget();
+    let upstream: Response | null = null;
 
-      try {
-        // Resolve the station page again on every upstream connection. The
-        // provider may rotate its published MP3 URL or session token.
-        target = await fetchStreamTarget();
-      } catch (err) {
-        req.log.warn({ err }, "Unable to resolve radio stream; will retry");
-        if (!headersSent) {
-          await wait(1000);
-          if (!clientDisconnected) continue;
-          return;
-        }
-        await wait(1500);
-        continue;
+    // The provider can return a one-byte HTML response while its relay wakes
+    // up. Give it a few seconds before reporting the station as unavailable.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const candidate = await fetch(target.url, {
+        headers: {
+          "User-Agent": BROWSER_USER_AGENT,
+          "Referer": RADIO_PAGE,
+          "Accept": "audio/mpeg,audio/*;q=0.9,*/*;q=0.5",
+          ...(target.cookie ? { Cookie: target.cookie } : {}),
+        },
+        redirect: "follow",
+      });
+      const contentType = candidate.headers.get("content-type") ?? "";
+      if (candidate.ok && candidate.body && contentType.toLowerCase().startsWith("audio/")) {
+        upstream = candidate;
+        break;
       }
-
-      let upstream: Response | null = null;
-      for (let attempt = 0; attempt < 4 && !clientDisconnected; attempt += 1) {
-        upstreamAbort = new AbortController();
-        try {
-          const candidate = await fetch(target.url, {
-            headers: {
-              "User-Agent": BROWSER_USER_AGENT,
-              "Referer": RADIO_PAGE,
-              "Accept": "audio/mpeg,audio/*;q=0.9,*/*;q=0.5",
-              ...(target.cookie ? { Cookie: target.cookie } : {}),
-            },
-            redirect: "follow",
-            signal: upstreamAbort.signal,
-          });
-          const contentType = candidate.headers.get("content-type") ?? "";
-          if (candidate.ok && candidate.body && contentType.toLowerCase().startsWith("audio/")) {
-            upstream = candidate;
-            break;
-          }
-          await candidate.arrayBuffer();
-        } catch (err) {
-          if (clientDisconnected) return;
-          req.log.warn({ err }, "Radio upstream connection failed");
-        }
-        if (attempt < 3 && !clientDisconnected) await wait(1000);
-      }
-
-      if (!upstream?.body) {
-        if (!headersSent) {
-          res.status(502).json({ error: "Radio stream is unavailable" });
-          return;
-        }
-        await wait(1500);
-        continue;
-      }
-
-      if (!headersSent) {
-        res.status(200);
-        res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "audio/mpeg");
-        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-        res.setHeader("Accept-Ranges", "none");
-        headersSent = true;
-      }
-
-      // Keep the client response open across upstream disconnects. If the
-      // provider ends or rotates its stream, resolve a fresh URL and continue.
-      const reader = upstream.body.getReader();
-      try {
-        while (!clientDisconnected && !res.destroyed) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value && value.byteLength > 0) {
-            const canContinue = res.write(Buffer.from(value));
-            if (!canContinue) {
-              await new Promise<void>((resolve) => res.once("drain", resolve));
-            }
-          }
-        }
-      } catch (err) {
-        if (!clientDisconnected) req.log.warn({ err }, "Radio upstream stream ended unexpectedly");
-      } finally {
-        try { await reader.cancel(); } catch { /* upstream may already be closed */ }
-        upstreamAbort?.abort();
-        upstreamAbort = null;
-      }
-
-      if (!clientDisconnected && !res.destroyed) await wait(1000);
+      await candidate.arrayBuffer();
+      if (attempt < 3) await wait(1000);
     }
+
+    if (!upstream?.body) {
+      res.status(502).json({ error: "Radio stream is unavailable" });
+      return;
+    }
+
+    res.status(200);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "audio/mpeg");
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.setHeader("Accept-Ranges", "none");
+    Readable.fromWeb(upstream.body as ReadableStream<Uint8Array>).pipe(res);
   } catch (err) {
     req.log.warn({ err }, "Unable to relay radio stream");
     if (!res.headersSent) res.status(502).json({ error: "Radio stream is unavailable" });
-    else if (!res.destroyed) res.end();
   }
 });
 
