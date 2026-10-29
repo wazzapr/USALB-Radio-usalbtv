@@ -1,44 +1,28 @@
 import { Router } from "express";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import {
   fetchStreamTarget,
   openFreshRadioAudio,
   wakeRadioStation,
 } from "../lib/radio-provider";
-import {
-  ensureRadioHlsRunning,
-  getRadioHlsFilePath,
-  waitForRadioHlsPlaylist,
-} from "../lib/radio-hls";
 
 const streamRouter = Router();
 
-// HLS gives each listener short playlist/segment requests instead of one live
-// HTTP request that the hosting proxy terminates after five minutes.
-streamRouter.get("/radio-hls/:filename", async (req, res): Promise<void> => {
-  const rawFilename = req.params.filename;
-  const filename = Array.isArray(rawFilename) ? rawFilename[0] : rawFilename;
-  const filePath = getRadioHlsFilePath(filename);
-  if (!filePath) {
-    res.status(404).end();
-    return;
+// Resolve the provider's current MP3 mount, then let the browser fetch audio
+// directly. The player stays on this app; this is an audio redirect, not a page.
+streamRouter.get("/stream-direct", async (req, res): Promise<void> => {
+  try {
+    const target = await fetchStreamTarget();
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.redirect(302, target.url);
+  } catch (err) {
+    req.log.warn({ err }, "Unable to resolve the direct radio stream");
+    res.status(503).json({ error: "Radio stream is unavailable" });
   }
-
-  ensureRadioHlsRunning();
-  if (filename === "playlist.m3u8" && !(await waitForRadioHlsPlaylist())) {
-    res.setHeader("Retry-After", "2");
-    res.status(503).json({ error: "Live radio is starting" });
-    return;
-  }
-
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-  res.type(filename.endsWith(".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp2t");
-  res.sendFile(filePath, (error) => {
-    if (error && !res.headersSent) res.status(404).end();
-  });
 });
 
-// Legacy continuous MP3 endpoint retained for compatibility and diagnostics.
+// Raw MP3 relay retained as a fallback for browsers that reject the redirect.
 streamRouter.get("/stream", async (req, res) => {
   let audioConnection: Awaited<ReturnType<typeof openFreshRadioAudio>> | null = null;
   try {
@@ -50,27 +34,40 @@ streamRouter.get("/stream", async (req, res) => {
   }
 
   const controller = audioConnection.controller;
-  const clientDisconnected = () => controller.abort();
+  const clientDisconnected = () => {
+    if (!controller.signal.aborted) controller.abort();
+  };
   req.once("aborted", clientDisconnected);
-  res.once("close", () => {
+  const handleResponseClose = () => {
     if (!res.writableEnded) clientDisconnected();
-  });
+  };
+  res.once("close", handleResponseClose);
 
   res.status(200);
   res.setHeader("Content-Type", audioConnection.response.headers.get("content-type") ?? "audio/mpeg");
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   res.setHeader("Accept-Ranges", "none");
-  if (audioConnection.response.body) {
-    Readable.fromWeb(audioConnection.response.body as ReadableStream<Uint8Array>).pipe(res);
+  try {
+    const body = audioConnection.response.body;
+    if (!body) {
+      res.end();
+      return;
+    }
+    await pipeline(Readable.fromWeb(body as ReadableStream<Uint8Array>), res);
+  } catch (err) {
+    if (!controller.signal.aborted) {
+      req.log.warn({ err }, "Radio audio relay ended unexpectedly");
+    }
+  } finally {
+    req.off("aborted", clientDisconnected);
+    res.off("close", handleResponseClose);
   }
 });
 
 streamRouter.get("/stream-warmup", async (req, res) => {
   try {
-    ensureRadioHlsRunning();
-    if (!(await waitForRadioHlsPlaylist())) {
-      throw new Error("Timed out waiting for the live radio segments");
-    }
+    const target = await fetchStreamTarget();
+    await wakeRadioStation(target.cookie);
     res.json({ ready: true });
   } catch (err) {
     req.log.warn({ err }, "Unable to warm the radio station");

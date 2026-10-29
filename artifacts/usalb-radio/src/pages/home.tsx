@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Play, Pause, Volume2, VolumeX, Radio, Copy, Check, Share2, RefreshCw, WifiOff, Download, X, ArrowUp } from "lucide-react";
-import Hls from "hls.js";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { SiFacebook, SiWhatsapp, SiX, SiMessenger } from "react-icons/si";
@@ -13,8 +12,8 @@ const isAndroid = /Android/.test(ua);
 const isInAppBrowser = /FBAN|FBAV|FBIOS|FB_IAB|Instagram|Messenger|TikTok|musical_ly|Line\//i.test(ua);
 const isStandaloneDisplay = window.matchMedia("(display-mode: standalone)").matches
   || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
-const STREAM_ENDPOINT = "/api/stream";
-const HLS_STREAM_ENDPOINT = "/api/radio-hls/playlist.m3u8";
+const STREAM_ENDPOINT = "/api/stream-direct";
+const PROVIDER_PAGE = "https://usalbradio.radiostream321.com/";
 const PUBLIC_APP_URL = "https://usalb-radio-usalbtv--applauncher2.replit.app/";
 
 const isAutoplayBlockedError = (error: unknown) => {
@@ -35,6 +34,9 @@ export default function Home() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
+  const providerFrameRef = useRef<HTMLIFrameElement>(null);
+  const providerFrameCloseTimerRef = useRef<number | null>(null);
+  const providerFrameClosedRef = useRef(false);
   const volumeRef = useRef(volume);
   const mutedRef = useRef(isMuted);
   volumeRef.current = volume;
@@ -58,9 +60,6 @@ export default function Home() {
   const autoplayBlockedRef = useRef(false);
   const userStoppedRef = useRef(false);
   const autoRecoveringRef = useRef(false);
-  const hlsRef = useRef<Hls | null>(null);
-  const hlsNativeRef = useRef(false);
-  const hlsSourceLoadedRef = useRef(false);
   useEffect(() => { streamOfflineRef.current = streamOffline; }, [streamOffline]);
 
   const isPlayingRef = useRef(false);
@@ -84,89 +83,20 @@ export default function Home() {
     };
   }, []);
 
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
+  const handleProviderFrameLoad = () => {
+    if (providerFrameClosedRef.current) return;
+    providerFrameClosedRef.current = true;
+    providerFrameCloseTimerRef.current = window.setTimeout(() => {
+      if (providerFrameRef.current) {
+        providerFrameRef.current.src = "about:blank";
+      }
+    }, 1200);
+  };
 
-    // Safari and iOS can play HLS directly; other supported browsers use hls.js.
-    if (audio.canPlayType("application/vnd.apple.mpegurl")) {
-      hlsNativeRef.current = true;
-      audio.src = HLS_STREAM_ENDPOINT;
-      return () => {
-        audio.pause();
-        audio.removeAttribute("src");
-        audio.load();
-        hlsNativeRef.current = false;
-      };
+  useEffect(() => () => {
+    if (providerFrameCloseTimerRef.current !== null) {
+      window.clearTimeout(providerFrameCloseTimerRef.current);
     }
-
-    if (!Hls.isSupported()) return;
-
-    const hls = new Hls({
-      autoStartLoad: false,
-      enableWorker: true,
-      lowLatencyMode: true,
-      liveSyncDurationCount: 3,
-      liveMaxLatencyDurationCount: 7,
-      maxLiveSyncPlaybackRate: 1.05,
-      backBufferLength: 30,
-    });
-    let hlsRetryTimer: number | null = null;
-    hlsRef.current = hls;
-    hls.attachMedia(audio);
-    hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-      hlsSourceLoadedRef.current = true;
-      hls.loadSource(HLS_STREAM_ENDPOINT);
-    });
-    hls.on(Hls.Events.ERROR, (_event, data) => {
-      if (!data.fatal) return;
-      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-        hls.recoverMediaError();
-        return;
-      }
-      if (userStoppedRef.current || hlsRetryTimer) return;
-
-      autoRecoveringRef.current = true;
-      setStreamOffline(true);
-      setIsLoading(true);
-      hlsRetryTimer = window.setTimeout(() => {
-        hlsRetryTimer = null;
-        if (!userStoppedRef.current) hls.startLoad(-1);
-      }, 1500);
-    });
-
-    return () => {
-      if (hlsRetryTimer !== null) window.clearTimeout(hlsRetryTimer);
-      hls.destroy();
-      hlsRef.current = null;
-      hlsSourceLoadedRef.current = false;
-    };
-  }, []);
-
-  // Warm the station silently through our API. The API reproduces the
-  // provider's listener-address confirmation server-side; loading the full
-  // RadioStream321 page in an iframe can escape the frame on some devices.
-  useEffect(() => {
-    let cancelled = false;
-
-    const warmStation = async () => {
-      try {
-        const response = await fetch("/api/stream-warmup", {
-          cache: "no-store",
-        });
-        if (!response.ok) throw new Error("Radio warm-up failed");
-      } catch {
-        // Playback will retry through /api/stream when the user presses Play.
-      }
-    };
-
-    void warmStation();
-    const retry = window.setTimeout(() => void warmStation(), 4000);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(retry);
-    };
   }, []);
 
   // Always share the public production URL. A temporary .replit.dev preview
@@ -324,35 +254,11 @@ export default function Home() {
     audio: HTMLAudioElement,
     forceFresh = false,
   ): Promise<void> => {
-    // HLS divides live audio into short requests rather than keeping a single
-    // browser connection open for the hosting proxy's five-minute limit.
+    // Start the provider's original MP3 stream from the Play gesture. The API
+    // redirects only the audio request, so the browser stays on this app.
+    audio.pause();
     audio.muted = mutedRef.current;
     audio.volume = volumeRef.current;
-
-    const hls = hlsRef.current;
-    if (hls) {
-      if (forceFresh) {
-        hls.stopLoad();
-        hls.loadSource(HLS_STREAM_ENDPOINT);
-        hlsSourceLoadedRef.current = true;
-      } else if (!hlsSourceLoadedRef.current) {
-        hls.loadSource(HLS_STREAM_ENDPOINT);
-        hlsSourceLoadedRef.current = true;
-      }
-      hls.startLoad(-1);
-      return audio.play();
-    }
-
-    if (hlsNativeRef.current) {
-      if (forceFresh) {
-        audio.src = `${HLS_STREAM_ENDPOINT}?_t=${Date.now()}`;
-        audio.load();
-      }
-      return audio.play();
-    }
-
-    // Fallback for older browsers without HLS support.
-    audio.pause();
     audio.src = `${STREAM_ENDPOINT}?_t=${Date.now()}${forceFresh ? "&fresh=1" : ""}`;
     audio.load();
     return audio.play();
@@ -423,7 +329,6 @@ export default function Home() {
     };
     const pauseFromMediaSession = () => {
       audioRef.current?.pause();
-      hlsRef.current?.stopLoad();
       setIsPlaying(false);
       clearRetryTimers();
     };
@@ -444,7 +349,6 @@ export default function Home() {
       userStoppedRef.current = true;
       autoRecoveringRef.current = false;
       audioRef.current?.pause();
-      hlsRef.current?.stopLoad();
       setIsPlaying(false);
       clearRetryTimers();
       setStreamOffline(false);
@@ -937,6 +841,17 @@ export default function Home() {
         ref={audioRef} 
         preload="auto"
         playsInline
+      />
+      <iframe
+        ref={providerFrameRef}
+        src={PROVIDER_PAGE}
+        title="Background radio station confirmation"
+        sandbox="allow-scripts allow-same-origin allow-forms"
+        loading="eager"
+        aria-hidden="true"
+        tabIndex={-1}
+        onLoad={handleProviderFrameLoad}
+        className="fixed left-0 top-0 -z-10 h-px w-px overflow-hidden border-0 opacity-0 pointer-events-none"
       />
     </div>
   );
