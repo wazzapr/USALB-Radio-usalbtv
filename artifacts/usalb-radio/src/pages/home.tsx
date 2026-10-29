@@ -90,7 +90,7 @@ export default function Home() {
       if (providerFrameRef.current) {
         providerFrameRef.current.src = "about:blank";
       }
-    }, 1200);
+    }, 150);
   };
 
   useEffect(() => () => {
@@ -847,6 +847,7 @@ export default function Home() {
         src={PROVIDER_PAGE}
         title="Background radio station confirmation"
         sandbox="allow-scripts allow-same-origin allow-forms"
+        allow="autoplay 'none'"
         loading="eager"
         aria-hidden="true"
         tabIndex={-1}

@@ -17,9 +17,9 @@ Listen2MyRadio can return HTTP 200 with `Content-Length: 1`, `Content-Type: text
 
 The official Listen2MyRadio player confirms the listener by POSTing to `openfire.ajax.php`. A hidden provider page can perform this check from the listener's browser, but it must be sandboxed without top-navigation permission so it cannot take over the app.
 
-**Why:** The provider page has attempted to navigate the top-level window when embedded. The sandbox blocks that navigation while preserving the provider's page-load confirmation.
+**Why:** The provider page has attempted to navigate the top-level window when embedded, and some in-app browsers may also play its own audio on load. The sandbox blocks navigation; an autoplay policy and quick unload keep the app silent.
 
-**How to apply:** Load the provider page briefly in a hidden sandboxed iframe, then play its original MP3 URL in the app's audio element. Use a same-origin redirect endpoint to discover the current stream without showing the provider page.
+**How to apply:** Load the provider page briefly in a hidden sandboxed iframe with autoplay explicitly denied, then unload it after its confirmation request is sent. Play the original MP3 URL only through the app's audio element.
 
 On this app's deployment, a single proxied live MP3 response is terminated after about five minutes even when the provider is still sending audio.
 
